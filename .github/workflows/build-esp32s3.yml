@@ -36,6 +36,7 @@ jobs:
 
       - name: Set up camera managed components
         run: |
+          . $IDF_PATH/export.sh
           MANAGED_DIR=$GITHUB_WORKSPACE/micropython/ports/esp32/managed_components
           mkdir -p $MANAGED_DIR
 
