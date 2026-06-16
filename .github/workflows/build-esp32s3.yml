@@ -40,14 +40,18 @@ jobs:
           . $IDF_PATH/export.sh
           make -C micropython/ports/esp32 submodules
 
+      - name: Patch cmake to enable camera module
+        run: |
+          sed -i 's/target_compile_definitions(usermod_esp32camera INTERFACE)/target_compile_definitions(usermod_esp32camera INTERFACE MODULE_CAMERA_ENABLED=1)/' src/micropython.cmake
+          grep MODULE_CAMERA src/micropython.cmake
+
       - name: Build camera firmware for ESP32-S3 + Octal PSRAM
         run: |
           . $IDF_PATH/export.sh
           make -C micropython/ports/esp32 \
             BOARD=ESP32_GENERIC_S3 \
             BOARD_VARIANT=SPIRAM_OCT \
-            USER_C_MODULES=$GITHUB_WORKSPACE/src/micropython.cmake \
-            CFLAGS_EXTRA="-DMODULE_CAMERA_ENABLED=1"
+            USER_C_MODULES=$GITHUB_WORKSPACE/src/micropython.cmake
 
       - name: Upload firmware artifact
         uses: actions/upload-artifact@v4.4.3
