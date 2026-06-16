@@ -124,6 +124,11 @@ jobs:
           echo "=== PATCHED src/micropython.cmake ==="
           cat src/micropython.cmake
 
+          # MicroPython v1.20+ removed the STATIC macro (was: #define STATIC static).
+          # Replace every use in modcamera.c so it compiles on v1.23.0.
+          sed -i 's/\bSTATIC\b/static/g' src/modcamera.c
+          echo "STATIC replacements done: $(grep -c 'static' src/modcamera.c) 'static' occurrences"
+
       - name: Build camera firmware for ESP32-S3 + Octal PSRAM
         run: |
           . $IDF_PATH/export.sh
