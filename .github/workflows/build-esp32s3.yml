@@ -44,7 +44,7 @@ jobs:
           # so this upgrade is picked up immediately by idf.py update-dependencies.
           echo "=== upgrading idf-component-manager ==="
           pip install --upgrade idf-component-manager --quiet
-          python3 -c "import idf_component_manager; print('cm version:', idf_component_manager.__version__)"
+          python3 -c "from importlib.metadata import version; print('cm version:', version('idf-component-manager'))"
 
           MANAGED_DIR=$GITHUB_WORKSPACE/micropython/ports/esp32/managed_components
           mkdir -p $MANAGED_DIR
