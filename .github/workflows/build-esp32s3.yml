@@ -19,12 +19,6 @@ jobs:
       - name: Fix git ownership (container uid mismatch)
         run: git config --global --add safe.directory '*'
 
-      - name: Add esp32-camera component to IDF
-        run: |
-          git clone --depth 1 \
-            https://github.com/espressif/esp32-camera.git \
-            $IDF_PATH/components/esp32-camera
-
       - name: Clone MicroPython v1.23.0
         run: |
           git clone --depth 1 -b v1.23.0 \
@@ -40,10 +34,47 @@ jobs:
           . $IDF_PATH/export.sh
           make -C micropython/ports/esp32 submodules
 
-      - name: Patch cmake to enable camera module
+      - name: Add esp32-camera to MicroPython component manifest
         run: |
-          sed -i 's/target_compile_definitions(usermod_esp32camera INTERFACE)/target_compile_definitions(usermod_esp32camera INTERFACE MODULE_CAMERA_ENABLED=1)/' src/micropython.cmake
-          grep MODULE_CAMERA src/micropython.cmake
+          # Add esp32-camera as a managed component so the IDF component manager
+          # downloads it (and its esp-jpeg dependency) into managed_components/
+          python3 -c "
+          import yaml, os
+          path = 'micropython/ports/esp32/main/idf_component.yml'
+          data = {}
+          if os.path.exists(path):
+              with open(path) as f:
+                  data = yaml.safe_load(f) or {}
+          data.setdefault('dependencies', {})['espressif/esp32-camera'] = {'version': '>=2.0.0'}
+          with open(path, 'w') as f:
+              yaml.dump(data, f, default_flow_style=False)
+          print('idf_component.yml:')
+          print(open(path).read())
+          "
+
+      - name: Patch cmake — use managed_components paths and enable module
+        run: |
+          python3 - << 'EOF'
+          with open('src/micropython.cmake', 'r') as f:
+              content = f.read()
+
+          # managed_components lands at <project_root>/managed_components/espressif__esp32-camera
+          # CMAKE_SOURCE_DIR == micropython/ports/esp32 at build time
+          content = content.replace(
+              '${IDF_PATH}/components/esp32-camera',
+              '${CMAKE_SOURCE_DIR}/managed_components/espressif__esp32-camera'
+          )
+
+          # Enable the camera C module
+          content = content.replace(
+              'target_compile_definitions(usermod_esp32camera INTERFACE)',
+              'target_compile_definitions(usermod_esp32camera INTERFACE MODULE_CAMERA_ENABLED=1)'
+          )
+
+          with open('src/micropython.cmake', 'w') as f:
+              f.write(content)
+          print(content)
+          EOF
 
       - name: Build camera firmware for ESP32-S3 + Octal PSRAM
         run: |
