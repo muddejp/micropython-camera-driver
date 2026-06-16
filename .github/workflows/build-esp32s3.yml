@@ -19,54 +19,6 @@ jobs:
       - name: Fix git ownership (container uid mismatch)
         run: git config --global --add safe.directory '*'
 
-      - name: Add esp32-camera to IDF components
-        run: |
-          # Clone into IDF so it's auto-discovered as a regular component
-          git clone --depth 1 \
-            https://github.com/espressif/esp32-camera.git \
-            $IDF_PATH/components/esp32-camera
-
-          # Remove managed-component manifest so IDF treats this as a plain
-          # component and doesn't try to resolve esp-jpeg via component manager
-          # (which would print BUG: component_requirements.py errors)
-          rm -f $IDF_PATH/components/esp32-camera/idf_component.yml
-
-          echo "=== esp32-camera cloned ==="
-          ls $IDF_PATH/components/esp32-camera/
-
-      - name: Resolve jpeg_decoder.h (required by img_converters.h)
-        run: |
-          echo "=== Searching IDF for jpeg_decoder.h ==="
-          find $IDF_PATH -name "jpeg_decoder.h" 2>/dev/null || true
-
-          JPEG_H=$(find $IDF_PATH -name "jpeg_decoder.h" 2>/dev/null | head -1)
-          DEST=$IDF_PATH/components/esp32-camera/conversions/include/jpeg_decoder.h
-
-          if [ -n "$JPEG_H" ]; then
-            echo "Found: $JPEG_H"
-            ln -sf "$JPEG_H" "$DEST"
-            echo "Symlinked OK"
-          else
-            echo "jpeg_decoder.h not found in IDF — writing minimal stub via printf"
-            printf '%s\n' \
-              '#pragma once' \
-              '#include <stdint.h>' \
-              '#include <stddef.h>' \
-              'typedef enum { JPEG_IMAGE_FORMAT_RGB888 = 0 } jpeg_image_format_t;' \
-              'typedef struct {' \
-              '    const uint8_t *indata; size_t indata_size;' \
-              '    uint8_t **outbuf; size_t *outbuf_size;' \
-              '    jpeg_image_format_t out_format;' \
-              '} esp_jpeg_image_cfg_t;' \
-              'typedef int esp_jpeg_image_output_t;' \
-              'static inline int esp_jpeg_decode(esp_jpeg_image_cfg_t *c, esp_jpeg_image_output_t *o) { return -1; }' \
-              > "$DEST"
-            echo "Stub written"
-          fi
-
-          echo "=== conversions/include after ==="
-          ls -la $IDF_PATH/components/esp32-camera/conversions/include/
-
       - name: Clone MicroPython v1.23.0
         run: |
           git clone --depth 1 -b v1.23.0 \
@@ -82,17 +34,70 @@ jobs:
           . $IDF_PATH/export.sh
           make -C micropython/ports/esp32 submodules
 
-      - name: Patch cmake — IDF paths and enable module
+      - name: Set up camera managed components
+        run: |
+          . $IDF_PATH/export.sh
+          MANAGED_DIR=$GITHUB_WORKSPACE/micropython/ports/esp32/managed_components
+          mkdir -p $MANAGED_DIR
+
+          echo "=== idf-component-manager version ==="
+          idf-component-manager --version 2>/dev/null \
+            || python3 -m idf_component_manager --version 2>/dev/null \
+            || echo "CLI not found — will try Python API"
+
+          # Clone esp32-camera directly into managed_components so the
+          # lemariva cmake paths (${CMAKE_SOURCE_DIR}/managed_components/...) work as-is
+          git clone --depth 1 \
+            https://github.com/espressif/esp32-camera.git \
+            $MANAGED_DIR/espressif__esp32-camera
+
+          # Use idf-component-manager to download esp-jpeg (required by esp32-camera)
+          # Run from a temp directory with a minimal project manifest
+          TMPPROJ=$(mktemp -d)
+          mkdir -p $TMPPROJ/main
+          printf 'dependencies:\n  idf: ">=5.0.0"\n  espressif/esp-jpeg:\n    version: ">=2.0.0"\n' \
+            > $TMPPROJ/main/idf_component.yml
+
+          echo "=== downloading esp-jpeg via component manager ==="
+          cd $TMPPROJ
+          idf-component-manager update-dependencies 2>&1 \
+            || python3 -m idf_component_manager update-dependencies 2>&1 \
+            || echo "WARN: idf-component-manager update-dependencies failed"
+
+          echo "=== temp managed_components ==="
+          ls $TMPPROJ/managed_components/ 2>/dev/null || echo "(none)"
+
+          if [ -d "$TMPPROJ/managed_components/espressif__esp-jpeg" ]; then
+            cp -r $TMPPROJ/managed_components/espressif__esp-jpeg \
+              $MANAGED_DIR/espressif__esp-jpeg
+            echo "esp-jpeg copied to managed_components"
+          else
+            echo "idf-component-manager did not download esp-jpeg — trying direct clone"
+            # Fallback: attempt to clone from GitHub (available as part of idf-extra-components)
+            git clone --depth 1 --filter=blob:none --sparse \
+              https://github.com/espressif/idf-extra-components.git /tmp/idf-extra 2>/dev/null
+            cd /tmp/idf-extra
+            git sparse-checkout set esp-jpeg 2>/dev/null
+            if [ -d "/tmp/idf-extra/esp-jpeg" ]; then
+              cp -r /tmp/idf-extra/esp-jpeg $MANAGED_DIR/espressif__esp-jpeg
+              echo "esp-jpeg cloned from idf-extra-components"
+            else
+              echo "ERROR: could not obtain esp-jpeg by any method"
+              exit 1
+            fi
+          fi
+
+          echo "=== managed_components ==="
+          ls $MANAGED_DIR/
+          find $MANAGED_DIR -name "jpeg_decoder.h" 2>/dev/null || echo "jpeg_decoder.h still not found"
+
+      - name: Patch cmake — enable camera module
         run: |
           echo "=== ORIGINAL src/micropython.cmake ==="
           cat src/micropython.cmake
 
-          # Redirect all include paths from managed_components to the IDF component
-          sed -i \
-            's|${CMAKE_SOURCE_DIR}/managed_components/espressif__esp32-camera|${IDF_PATH}/components/esp32-camera|g' \
-            src/micropython.cmake
-
-          # Enable the MicroPython camera module
+          # Enable the MicroPython camera module flag
+          # (include paths already point to managed_components — no change needed)
           sed -i \
             's|target_compile_definitions(usermod_esp32camera INTERFACE)|target_compile_definitions(usermod_esp32camera INTERFACE MODULE_CAMERA_ENABLED=1)|g' \
             src/micropython.cmake
