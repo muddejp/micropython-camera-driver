@@ -3,6 +3,9 @@ name: Build pyDrone Camera Firmware (ESP32-S3)
 on:
   workflow_dispatch:   # trigger manually from the Actions tab
 
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -11,7 +14,7 @@ jobs:
 
     steps:
       - name: Checkout camera driver
-        uses: actions/checkout@v4
+        uses: actions/checkout@v4.2.2
 
       - name: Fix git ownership (container uid mismatch)
         run: git config --global --add safe.directory '*'
@@ -44,7 +47,7 @@ jobs:
             CFLAGS_EXTRA="-DMODULE_CAMERA_ENABLED=1"
 
       - name: Upload firmware artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v4.4.3
         with:
           name: pydrone-camera-firmware-esp32s3
           path: micropython/ports/esp32/build-ESP32_GENERIC_S3-SPIRAM_OCT/firmware.bin
