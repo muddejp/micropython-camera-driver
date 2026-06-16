@@ -106,6 +106,12 @@ jobs:
           echo "=== managed_components ==="
           ls $MANAGED_DIR/
 
+          # lemariva's esp32_common.cmake hardcodes /opt/esp/idf/components/esp32-camera/
+          # Symlink it to our managed_components clone so cmake finds the headers.
+          ln -sf $MANAGED_DIR/espressif__esp32-camera /opt/esp/idf/components/esp32-camera
+          echo "=== esp32-camera symlink ==="
+          ls -la /opt/esp/idf/components/esp32-camera/driver/include/ | head -5
+
       - name: Patch cmake — enable camera module
         run: |
           echo "=== ORIGINAL src/micropython.cmake ==="
