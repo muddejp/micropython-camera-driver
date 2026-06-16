@@ -19,6 +19,60 @@ jobs:
       - name: Fix git ownership (container uid mismatch)
         run: git config --global --add safe.directory '*'
 
+      - name: Add esp32-camera to IDF components
+        run: |
+          # Clone into IDF so it's auto-discovered as a regular component
+          git clone --depth 1 \
+            https://github.com/espressif/esp32-camera.git \
+            $IDF_PATH/components/esp32-camera
+
+          # Remove managed-component manifest so IDF treats this as a plain
+          # component and doesn't try to resolve esp-jpeg via component manager
+          # (which would print BUG: component_requirements.py errors)
+          rm -f $IDF_PATH/components/esp32-camera/idf_component.yml
+
+          echo "=== esp32-camera cloned ==="
+          ls $IDF_PATH/components/esp32-camera/
+
+      - name: Resolve jpeg_decoder.h (needed by img_converters.h)
+        run: |
+          echo "=== Searching for jpeg_decoder.h in IDF ==="
+          find $IDF_PATH -name "jpeg_decoder.h" 2>/dev/null || true
+
+          JPEG_H=$(find $IDF_PATH -name "jpeg_decoder.h" 2>/dev/null | head -1)
+
+          if [ -n "$JPEG_H" ]; then
+            echo "Found: $JPEG_H"
+            # Symlink it into the one directory already on the include path
+            # so img_converters.h's bare #include "jpeg_decoder.h" resolves
+            ln -sf "$JPEG_H" \
+              $IDF_PATH/components/esp32-camera/conversions/include/jpeg_decoder.h
+            echo "Symlinked OK"
+          else
+            echo "jpeg_decoder.h not in IDF — creating minimal stub"
+            # esp-jpeg stub: only need the bare minimum that img_converters.h references
+            cat > $IDF_PATH/components/esp32-camera/conversions/include/jpeg_decoder.h << 'HEOF'
+#pragma once
+// Minimal esp-jpeg stub for build compatibility
+#include <stdint.h>
+#include <stddef.h>
+typedef enum { JPEG_IMAGE_FORMAT_RGB888 = 0 } jpeg_image_format_t;
+typedef struct {
+    const uint8_t *indata;
+    size_t indata_size;
+    uint8_t **outbuf;
+    size_t *outbuf_size;
+    jpeg_image_format_t out_format;
+} esp_jpeg_image_cfg_t;
+typedef int esp_jpeg_image_output_t;
+static inline int esp_jpeg_decode(esp_jpeg_image_cfg_t *cfg, esp_jpeg_image_output_t *output) { return -1; }
+HEOF
+            echo "Stub written"
+          fi
+
+          echo "=== conversions/include contents ==="
+          ls $IDF_PATH/components/esp32-camera/conversions/include/
+
       - name: Clone MicroPython v1.23.0
         run: |
           git clone --depth 1 -b v1.23.0 \
@@ -34,36 +88,40 @@ jobs:
           . $IDF_PATH/export.sh
           make -C micropython/ports/esp32 submodules
 
-      - name: Add esp32-camera to MicroPython component manifest
-        run: |
-          echo "--- before ---"
-          cat micropython/ports/esp32/main/idf_component.yml 2>/dev/null || echo "(file not found)"
-          printf '  espressif/esp32-camera:\n    version: ">=2.0.0"\n' \
-            >> micropython/ports/esp32/main/idf_component.yml
-          echo "--- after ---"
-          cat micropython/ports/esp32/main/idf_component.yml
-
-      - name: Patch cmake — use managed_components paths and enable module
+      - name: Patch cmake — IDF paths and enable module
         run: |
           python3 - << 'EOF'
+          import re
+
           with open('src/micropython.cmake', 'r') as f:
               content = f.read()
 
-          # managed_components lands at <project_root>/managed_components/espressif__esp32-camera
-          # CMAKE_SOURCE_DIR == micropython/ports/esp32 at build time
+          print("=== ORIGINAL ===")
+          print(content)
+
+          # 1. Point includes at the IDF component (not managed_components)
           content = content.replace(
-              '${IDF_PATH}/components/esp32-camera',
-              '${CMAKE_SOURCE_DIR}/managed_components/espressif__esp32-camera'
+              '${CMAKE_SOURCE_DIR}/managed_components/espressif__esp32-camera',
+              '${IDF_PATH}/components/esp32-camera'
           )
 
-          # Enable the camera C module
+          # 2. Enable the camera module — handle both forms of the definition line
           content = content.replace(
               'target_compile_definitions(usermod_esp32camera INTERFACE)',
               'target_compile_definitions(usermod_esp32camera INTERFACE MODULE_CAMERA_ENABLED=1)'
           )
+          # Also handle if it already has content but is missing the flag
+          if 'MODULE_CAMERA_ENABLED' not in content:
+              content = re.sub(
+                  r'(target_compile_definitions\s*\(\s*usermod_esp32camera\s+INTERFACE)',
+                  r'\1 MODULE_CAMERA_ENABLED=1',
+                  content
+              )
 
           with open('src/micropython.cmake', 'w') as f:
               f.write(content)
+
+          print("=== PATCHED ===")
           print(content)
           EOF
 
