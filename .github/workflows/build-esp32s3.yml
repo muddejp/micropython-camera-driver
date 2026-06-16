@@ -36,73 +36,58 @@ jobs:
 
       - name: Set up camera managed components
         run: |
+          . $IDF_PATH/export.sh
           MANAGED_DIR=$GITHUB_WORKSPACE/micropython/ports/esp32/managed_components
           mkdir -p $MANAGED_DIR
 
           # Clone esp32-camera into managed_components so the lemariva cmake
-          # paths (${CMAKE_SOURCE_DIR}/managed_components/...) work unchanged.
-          # Delete its idf_component.yml so the IDF component manager does not
-          # try to re-resolve managed deps at build time.
+          # paths (${CMAKE_SOURCE_DIR}/managed_components/...) resolve correctly.
+          # Delete its idf_component.yml so the build-time component manager
+          # does not re-resolve managed deps.
           git clone --depth 1 \
             https://github.com/espressif/esp32-camera.git \
             $MANAGED_DIR/espressif__esp32-camera
           rm -f $MANAGED_DIR/espressif__esp32-camera/idf_component.yml
 
-          # esp-jpeg is a built-in IDF component that the Docker image omits.
-          # Sparse-clone just that subdirectory from the ESP-IDF v5.2.2 tag.
-          echo "=== sparse-cloning esp-jpeg from ESP-IDF v5.2.2 ==="
-          git clone --depth 1 --filter=blob:none --sparse \
-            -b v5.2.2 \
-            https://github.com/espressif/esp-idf.git \
-            /tmp/esp-idf-sparse
-          cd /tmp/esp-idf-sparse
-          git sparse-checkout set components/esp-jpeg
+          # esp-jpeg became a managed component in IDF v5.1 (not in the GitHub
+          # source tree). Use idf.py update-dependencies with a minimal temp
+          # project to download it from the Espressif component registry.
+          TMPPROJ=$(mktemp -d)
+          mkdir -p $TMPPROJ/main
 
-          echo "=== esp-jpeg directory contents ==="
-          ls components/esp-jpeg/ 2>/dev/null || echo "(not found)"
+          printf 'cmake_minimum_required(VERSION 3.16)\ninclude($ENV{IDF_PATH}/tools/cmake/project.cmake)\nproject(tmp)\n' \
+            > $TMPPROJ/CMakeLists.txt
+          printf 'idf_component_register()\n' \
+            > $TMPPROJ/main/CMakeLists.txt
+          printf 'dependencies:\n  idf: ">=5.0.0"\n  espressif/esp-jpeg:\n    version: ">=2.0.0"\n' \
+            > $TMPPROJ/main/idf_component.yml
 
-          if [ -d "components/esp-jpeg" ] && find components/esp-jpeg -name "*.h" | grep -q .; then
-            cp -r components/esp-jpeg $MANAGED_DIR/espressif__esp-jpeg
+          echo "=== idf.py update-dependencies ==="
+          idf.py --project-dir $TMPPROJ update-dependencies
+
+          echo "=== downloaded ==="
+          ls $TMPPROJ/managed_components/ 2>/dev/null || echo "(none)"
+
+          if [ -d "$TMPPROJ/managed_components/espressif__esp-jpeg" ]; then
+            cp -r $TMPPROJ/managed_components/espressif__esp-jpeg \
+              $MANAGED_DIR/espressif__esp-jpeg
             echo "esp-jpeg placed in managed_components"
           else
-            # If sparse checkout found nothing, try one level deeper
-            echo "Checking for esp-jpeg in subdirectories..."
-            find /tmp/esp-idf-sparse -name "jpeg_decoder.h" 2>/dev/null || echo "jpeg_decoder.h not found anywhere in sparse clone"
-            find /tmp/esp-idf-sparse/components -maxdepth 1 -type d 2>/dev/null | head -20 || echo "(no components dir)"
-
-            # Fallback: upgrade pip + idf-component-manager and use it to download
-            echo "=== fallback: pip upgrade + idf-component-manager ==="
-            . $IDF_PATH/export.sh
-            pip install --upgrade 'idf-component-manager>=1.4.0' --quiet
-            TMPPROJ=$(mktemp -d)
-            mkdir -p $TMPPROJ/main
-            printf 'dependencies:\n  idf: ">=5.0.0"\n  espressif/esp-jpeg:\n    version: ">=2.0.0"\n' \
-              > $TMPPROJ/main/idf_component.yml
-            cd $TMPPROJ
-            idf-component-manager update-dependencies 2>&1 || true
-            if [ -d "$TMPPROJ/managed_components/espressif__esp-jpeg" ]; then
-              cp -r "$TMPPROJ/managed_components/espressif__esp-jpeg" \
-                $MANAGED_DIR/espressif__esp-jpeg
-              echo "esp-jpeg downloaded via idf-component-manager"
-            else
-              echo "ERROR: could not obtain esp-jpeg by any method"
-              exit 1
-            fi
+            echo "ERROR: idf.py update-dependencies did not produce esp-jpeg"
+            exit 1
           fi
-
-          cd $GITHUB_WORKSPACE
 
           # Symlink jpeg_decoder.h into esp32-camera's conversions/include so
           # img_converters.h's bare #include "jpeg_decoder.h" resolves without
-          # adding esp-jpeg to the cmake include paths.
+          # changing the lemariva cmake include list.
           JPEG_H=$(find $MANAGED_DIR/espressif__esp-jpeg -name "jpeg_decoder.h" | head -1)
-          echo "jpeg_decoder.h location: $JPEG_H"
+          echo "jpeg_decoder.h: $JPEG_H"
           if [ -n "$JPEG_H" ]; then
             ln -sf "$JPEG_H" \
               $MANAGED_DIR/espressif__esp32-camera/conversions/include/jpeg_decoder.h
             echo "Symlinked OK"
           else
-            echo "WARNING: jpeg_decoder.h not found in esp-jpeg"
+            echo "WARNING: jpeg_decoder.h not found — listing esp-jpeg headers"
             find $MANAGED_DIR/espressif__esp-jpeg -name "*.h" | head -20
           fi
 
