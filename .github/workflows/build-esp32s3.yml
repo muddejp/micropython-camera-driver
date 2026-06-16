@@ -36,54 +36,48 @@ jobs:
 
       - name: Set up camera managed components
         run: |
-          . $IDF_PATH/export.sh
-
-          # The idf-component-manager bundled in the v5.2.2 image is too old to
-          # find espressif/esp-jpeg on the current registry. Upgrade it first.
-          # idf.py imports idf_component_manager directly from the active venv,
-          # so this upgrade is picked up immediately by idf.py update-dependencies.
-          echo "=== upgrading idf-component-manager ==="
-          pip install "idf-component-manager>=1.4,<2.0" --upgrade --quiet
-          python3 -c "from importlib.metadata import version; print('cm version:', version('idf-component-manager'))"
-
           MANAGED_DIR=$GITHUB_WORKSPACE/micropython/ports/esp32/managed_components
           mkdir -p $MANAGED_DIR
 
-          # Clone esp32-camera into managed_components so the lemariva cmake
-          # paths (${CMAKE_SOURCE_DIR}/managed_components/...) resolve correctly.
-          # Delete its idf_component.yml so the build-time component manager
-          # does not re-resolve managed deps.
+          # esp32-camera: clone, then remove idf_component.yml so cmake does
+          # not try to re-resolve its managed dep (esp-jpeg) at build time.
           git clone --depth 1 \
             https://github.com/espressif/esp32-camera.git \
             $MANAGED_DIR/espressif__esp32-camera
           rm -f $MANAGED_DIR/espressif__esp32-camera/idf_component.yml
 
-          # Use idf.py update-dependencies with a minimal temp project to
-          # download esp-jpeg from the Espressif component registry.
-          TMPPROJ=$(mktemp -d)
-          mkdir -p $TMPPROJ/main
+          # esp-jpeg: the bundled idf-component-manager in the IDF 5.2.2 image
+          # is too old to find this component on the current registry, and
+          # upgrading to v2.x breaks cmake's --interface_version 2 call.
+          # Bypass the component manager entirely: query the registry REST API
+          # with curl and extract the tarball directly.
+          echo "=== fetching esp-jpeg from Espressif component registry ==="
+          ESP_JPEG_URL=""
+          for API in \
+            "https://components.espressif.com/api/components/espressif/esp-jpeg/versions/" \
+            "https://components.espressif.com/api/components/espressif__esp-jpeg/versions/" \
+            "https://components.espressif.com/api/v1/components/espressif/esp-jpeg/"; do
+            echo "  GET $API"
+            RESP=$(curl -sf --max-time 20 \
+              -H "Accept: application/json" \
+              -H "User-Agent: idf-component-manager/1.5.0" "$API") || continue
+            echo "  snippet: ${RESP:0:300}"
+            URL=$(echo "$RESP" | python3 -c 'import sys,json; d=json.load(sys.stdin); vs=d.get("versions") or d.get("results") or (d if isinstance(d,list) else []); v=vs[0] if vs else {}; print(v.get("url") or v.get("download_url") or v.get("url_to_download") or "")' 2>/dev/null)
+            [ -n "$URL" ] && { ESP_JPEG_URL="$URL"; break; }
+          done
 
-          printf 'cmake_minimum_required(VERSION 3.16)\ninclude($ENV{IDF_PATH}/tools/cmake/project.cmake)\nproject(tmp)\n' \
-            > $TMPPROJ/CMakeLists.txt
-          printf 'idf_component_register()\n' \
-            > $TMPPROJ/main/CMakeLists.txt
-          printf 'dependencies:\n  idf: ">=5.0.0"\n  espressif/esp-jpeg: "*"\n' \
-            > $TMPPROJ/main/idf_component.yml
-
-          echo "=== idf.py update-dependencies ==="
-          idf.py --project-dir $TMPPROJ update-dependencies
-
-          echo "=== downloaded ==="
-          ls $TMPPROJ/managed_components/ 2>/dev/null || echo "(none)"
-
-          if [ -d "$TMPPROJ/managed_components/espressif__esp-jpeg" ]; then
-            cp -r $TMPPROJ/managed_components/espressif__esp-jpeg \
-              $MANAGED_DIR/espressif__esp-jpeg
-            echo "esp-jpeg placed in managed_components"
-          else
-            echo "ERROR: idf.py update-dependencies did not produce esp-jpeg"
+          if [ -z "$ESP_JPEG_URL" ]; then
+            echo "ERROR: could not get a download URL from any registry endpoint"
             exit 1
           fi
+
+          echo "Downloading: $ESP_JPEG_URL"
+          mkdir -p $MANAGED_DIR/espressif__esp-jpeg
+          curl -sL --max-time 120 "$ESP_JPEG_URL" \
+            | tar -xzf - --strip-components=1 \
+                  -C $MANAGED_DIR/espressif__esp-jpeg
+          rm -f $MANAGED_DIR/espressif__esp-jpeg/idf_component.yml
+          echo "esp-jpeg contents: $(ls $MANAGED_DIR/espressif__esp-jpeg | head -8)"
 
           # Symlink jpeg_decoder.h into esp32-camera's conversions/include so
           # img_converters.h's bare #include "jpeg_decoder.h" resolves without
