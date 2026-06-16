@@ -36,10 +36,13 @@ jobs:
         run: make -C micropython/mpy-cross
 
       - name: Fetch ESP32 port submodules
-        run: make -C micropython/ports/esp32 submodules
+        run: |
+          . $IDF_PATH/export.sh
+          make -C micropython/ports/esp32 submodules
 
       - name: Build camera firmware for ESP32-S3 + Octal PSRAM
         run: |
+          . $IDF_PATH/export.sh
           make -C micropython/ports/esp32 \
             BOARD=ESP32_GENERIC_S3 \
             BOARD_VARIANT=SPIRAM_OCT \
