@@ -43,7 +43,7 @@ jobs:
           # idf.py imports idf_component_manager directly from the active venv,
           # so this upgrade is picked up immediately by idf.py update-dependencies.
           echo "=== upgrading idf-component-manager ==="
-          pip install --upgrade idf-component-manager --quiet
+          pip install "idf-component-manager>=1.4,<2.0" --upgrade --quiet
           python3 -c "from importlib.metadata import version; print('cm version:', version('idf-component-manager'))"
 
           MANAGED_DIR=$GITHUB_WORKSPACE/micropython/ports/esp32/managed_components
@@ -67,7 +67,7 @@ jobs:
             > $TMPPROJ/CMakeLists.txt
           printf 'idf_component_register()\n' \
             > $TMPPROJ/main/CMakeLists.txt
-          printf 'dependencies:\n  idf: ">=5.0.0"\n  espressif/esp-jpeg:\n    version: ">=2.0.0"\n' \
+          printf 'dependencies:\n  idf: ">=5.0.0"\n  espressif/esp-jpeg: "*"\n' \
             > $TMPPROJ/main/idf_component.yml
 
           echo "=== idf.py update-dependencies ==="
