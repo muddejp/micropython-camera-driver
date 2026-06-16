@@ -34,44 +34,38 @@ jobs:
           echo "=== esp32-camera cloned ==="
           ls $IDF_PATH/components/esp32-camera/
 
-      - name: Resolve jpeg_decoder.h (needed by img_converters.h)
+      - name: Resolve jpeg_decoder.h (required by img_converters.h)
         run: |
-          echo "=== Searching for jpeg_decoder.h in IDF ==="
+          echo "=== Searching IDF for jpeg_decoder.h ==="
           find $IDF_PATH -name "jpeg_decoder.h" 2>/dev/null || true
 
           JPEG_H=$(find $IDF_PATH -name "jpeg_decoder.h" 2>/dev/null | head -1)
+          DEST=$IDF_PATH/components/esp32-camera/conversions/include/jpeg_decoder.h
 
           if [ -n "$JPEG_H" ]; then
             echo "Found: $JPEG_H"
-            # Symlink it into the one directory already on the include path
-            # so img_converters.h's bare #include "jpeg_decoder.h" resolves
-            ln -sf "$JPEG_H" \
-              $IDF_PATH/components/esp32-camera/conversions/include/jpeg_decoder.h
+            ln -sf "$JPEG_H" "$DEST"
             echo "Symlinked OK"
           else
-            echo "jpeg_decoder.h not in IDF — creating minimal stub"
-            # esp-jpeg stub: only need the bare minimum that img_converters.h references
-            cat > $IDF_PATH/components/esp32-camera/conversions/include/jpeg_decoder.h << 'HEOF'
-#pragma once
-// Minimal esp-jpeg stub for build compatibility
-#include <stdint.h>
-#include <stddef.h>
-typedef enum { JPEG_IMAGE_FORMAT_RGB888 = 0 } jpeg_image_format_t;
-typedef struct {
-    const uint8_t *indata;
-    size_t indata_size;
-    uint8_t **outbuf;
-    size_t *outbuf_size;
-    jpeg_image_format_t out_format;
-} esp_jpeg_image_cfg_t;
-typedef int esp_jpeg_image_output_t;
-static inline int esp_jpeg_decode(esp_jpeg_image_cfg_t *cfg, esp_jpeg_image_output_t *output) { return -1; }
-HEOF
+            echo "jpeg_decoder.h not found in IDF — writing minimal stub via printf"
+            printf '%s\n' \
+              '#pragma once' \
+              '#include <stdint.h>' \
+              '#include <stddef.h>' \
+              'typedef enum { JPEG_IMAGE_FORMAT_RGB888 = 0 } jpeg_image_format_t;' \
+              'typedef struct {' \
+              '    const uint8_t *indata; size_t indata_size;' \
+              '    uint8_t **outbuf; size_t *outbuf_size;' \
+              '    jpeg_image_format_t out_format;' \
+              '} esp_jpeg_image_cfg_t;' \
+              'typedef int esp_jpeg_image_output_t;' \
+              'static inline int esp_jpeg_decode(esp_jpeg_image_cfg_t *c, esp_jpeg_image_output_t *o) { return -1; }' \
+              > "$DEST"
             echo "Stub written"
           fi
 
-          echo "=== conversions/include contents ==="
-          ls $IDF_PATH/components/esp32-camera/conversions/include/
+          echo "=== conversions/include after ==="
+          ls -la $IDF_PATH/components/esp32-camera/conversions/include/
 
       - name: Clone MicroPython v1.23.0
         run: |
@@ -90,40 +84,21 @@ HEOF
 
       - name: Patch cmake — IDF paths and enable module
         run: |
-          python3 - << 'EOF'
-          import re
+          echo "=== ORIGINAL src/micropython.cmake ==="
+          cat src/micropython.cmake
 
-          with open('src/micropython.cmake', 'r') as f:
-              content = f.read()
+          # Redirect all include paths from managed_components to the IDF component
+          sed -i \
+            's|${CMAKE_SOURCE_DIR}/managed_components/espressif__esp32-camera|${IDF_PATH}/components/esp32-camera|g' \
+            src/micropython.cmake
 
-          print("=== ORIGINAL ===")
-          print(content)
+          # Enable the MicroPython camera module
+          sed -i \
+            's|target_compile_definitions(usermod_esp32camera INTERFACE)|target_compile_definitions(usermod_esp32camera INTERFACE MODULE_CAMERA_ENABLED=1)|g' \
+            src/micropython.cmake
 
-          # 1. Point includes at the IDF component (not managed_components)
-          content = content.replace(
-              '${CMAKE_SOURCE_DIR}/managed_components/espressif__esp32-camera',
-              '${IDF_PATH}/components/esp32-camera'
-          )
-
-          # 2. Enable the camera module — handle both forms of the definition line
-          content = content.replace(
-              'target_compile_definitions(usermod_esp32camera INTERFACE)',
-              'target_compile_definitions(usermod_esp32camera INTERFACE MODULE_CAMERA_ENABLED=1)'
-          )
-          # Also handle if it already has content but is missing the flag
-          if 'MODULE_CAMERA_ENABLED' not in content:
-              content = re.sub(
-                  r'(target_compile_definitions\s*\(\s*usermod_esp32camera\s+INTERFACE)',
-                  r'\1 MODULE_CAMERA_ENABLED=1',
-                  content
-              )
-
-          with open('src/micropython.cmake', 'w') as f:
-              f.write(content)
-
-          print("=== PATCHED ===")
-          print(content)
-          EOF
+          echo "=== PATCHED src/micropython.cmake ==="
+          cat src/micropython.cmake
 
       - name: Build camera firmware for ESP32-S3 + Octal PSRAM
         run: |
