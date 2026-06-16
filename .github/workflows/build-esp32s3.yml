@@ -39,58 +39,70 @@ jobs:
           MANAGED_DIR=$GITHUB_WORKSPACE/micropython/ports/esp32/managed_components
           mkdir -p $MANAGED_DIR
 
-          # esp32-camera: clone, then remove idf_component.yml so cmake does
-          # not try to re-resolve its managed dep (esp-jpeg) at build time.
           git clone --depth 1 \
             https://github.com/espressif/esp32-camera.git \
             $MANAGED_DIR/espressif__esp32-camera
           rm -f $MANAGED_DIR/espressif__esp32-camera/idf_component.yml
 
-          # esp-jpeg: the bundled idf-component-manager in the IDF 5.2.2 image
-          # is too old to find this component on the current registry, and
-          # upgrading to v2.x breaks cmake's --interface_version 2 call.
-          # Bypass the component manager entirely: query the registry REST API
-          # with curl and extract the tarball directly.
-          echo "=== fetching esp-jpeg from Espressif component registry ==="
+          echo "=== searching Docker image for pre-installed esp-jpeg ==="
+          find /opt/esp -name 'jpeg_decoder.h' 2>/dev/null | head -5 || true
+          find /root -type d -name 'espressif__esp-jpeg' 2>/dev/null | head -5 || true
+
+          echo "=== idf-component-manager registry URL from installed source ==="
+          python3 -c "
+          import idf_component_manager, os
+          pkg = os.path.dirname(idf_component_manager.__file__)
+          print('package:', pkg)
+          for fname in sorted(os.listdir(pkg)):
+              if not fname.endswith('.py'):
+                  continue
+              txt = open(os.path.join(pkg, fname)).read()
+              for line in txt.splitlines():
+                  ls = line.strip()
+                  if 'espressif.com' in ls.lower() or 'COMPONENT_SERVICE' in ls:
+                      print(fname + ': ' + ls)
+          "
+
+          echo "=== probing registry API (HTTP status shown for each URL) ==="
           ESP_JPEG_URL=""
           for API in \
             "https://components.espressif.com/api/components/espressif/esp-jpeg/versions/" \
-            "https://components.espressif.com/api/components/espressif__esp-jpeg/versions/" \
-            "https://components.espressif.com/api/v1/components/espressif/esp-jpeg/"; do
-            echo "  GET $API"
-            RESP=$(curl -sf --max-time 20 \
+            "https://components.espressif.com/api/components/espressif/esp-jpeg" \
+            "https://components.espressif.com/api/v2/components/espressif/esp-jpeg/versions/" \
+            "https://components.espressif.com/api/v2/components/espressif/esp-jpeg"; do
+            echo "--- $API ---"
+            HTTP=$(curl -s --max-time 20 \
               -H "Accept: application/json" \
-              -H "User-Agent: idf-component-manager/1.5.0" "$API") || continue
-            echo "  snippet: ${RESP:0:300}"
-            URL=$(echo "$RESP" | python3 -c 'import sys,json; d=json.load(sys.stdin); vs=d.get("versions") or d.get("results") or (d if isinstance(d,list) else []); v=vs[0] if vs else {}; print(v.get("url") or v.get("download_url") or v.get("url_to_download") or "")' 2>/dev/null)
-            [ -n "$URL" ] && { ESP_JPEG_URL="$URL"; break; }
+              -H "User-Agent: idf-component-manager/1.5.0" \
+              -o /tmp/resp.json -w "%{http_code}" "$API" 2>/dev/null || echo 000)
+            echo "  HTTP $HTTP  body: $(cat /tmp/resp.json 2>/dev/null | head -c 400)"
+            if [ "$HTTP" = "200" ]; then
+              URL=$(python3 -c 'import json; d=json.load(open("/tmp/resp.json")); vs=d.get("versions") or d.get("results") or (d if isinstance(d,list) else []); v=vs[0] if vs else {}; print(v.get("url") or v.get("download_url") or v.get("url_to_download") or "")' 2>/dev/null)
+              [ -n "$URL" ] && { ESP_JPEG_URL="$URL"; echo "  DOWNLOAD URL: $URL"; break; }
+            fi
           done
 
           if [ -z "$ESP_JPEG_URL" ]; then
-            echo "ERROR: could not get a download URL from any registry endpoint"
+            echo "ERROR: no download URL from registry. See probe output above."
             exit 1
           fi
 
-          echo "Downloading: $ESP_JPEG_URL"
+          echo "Downloading $ESP_JPEG_URL"
           mkdir -p $MANAGED_DIR/espressif__esp-jpeg
           curl -sL --max-time 120 "$ESP_JPEG_URL" \
-            | tar -xzf - --strip-components=1 \
-                  -C $MANAGED_DIR/espressif__esp-jpeg
+            | tar -xzf - --strip-components=1 -C $MANAGED_DIR/espressif__esp-jpeg
           rm -f $MANAGED_DIR/espressif__esp-jpeg/idf_component.yml
-          echo "esp-jpeg contents: $(ls $MANAGED_DIR/espressif__esp-jpeg | head -8)"
+          echo "esp-jpeg: $(ls $MANAGED_DIR/espressif__esp-jpeg | head -8)"
 
-          # Symlink jpeg_decoder.h into esp32-camera's conversions/include so
-          # img_converters.h's bare #include "jpeg_decoder.h" resolves without
-          # changing the lemariva cmake include list.
-          JPEG_H=$(find $MANAGED_DIR/espressif__esp-jpeg -name "jpeg_decoder.h" | head -1)
+          JPEG_H=$(find $MANAGED_DIR/espressif__esp-jpeg -name 'jpeg_decoder.h' | head -1)
           echo "jpeg_decoder.h: $JPEG_H"
           if [ -n "$JPEG_H" ]; then
             ln -sf "$JPEG_H" \
               $MANAGED_DIR/espressif__esp32-camera/conversions/include/jpeg_decoder.h
             echo "Symlinked OK"
           else
-            echo "WARNING: jpeg_decoder.h not found — listing esp-jpeg headers"
-            find $MANAGED_DIR/espressif__esp-jpeg -name "*.h" | head -20
+            echo "WARNING: jpeg_decoder.h not found"
+            find $MANAGED_DIR/espressif__esp-jpeg -name '*.h' | head -20
           fi
 
           echo "=== managed_components ==="
