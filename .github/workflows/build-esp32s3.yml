@@ -137,6 +137,16 @@ jobs:
             BOARD_VARIANT=SPIRAM_OCT \
             USER_C_MODULES=$GITHUB_WORKSPACE/src/micropython.cmake
 
+      - name: Dump build error logs
+        if: failure()
+        run: |
+          echo "=== idf_py_stderr_output ==="
+          find micropython/ports/esp32/build-ESP32_GENERIC_S3-SPIRAM_OCT/log \
+            -name 'idf_py_stderr_output_*' -exec cat {} \; 2>/dev/null | tail -300
+          echo "=== idf_py_stdout_output (tail) ==="
+          find micropython/ports/esp32/build-ESP32_GENERIC_S3-SPIRAM_OCT/log \
+            -name 'idf_py_stdout_output_*' -exec cat {} \; 2>/dev/null | tail -50
+
       - name: Upload firmware artifact
         uses: actions/upload-artifact@v4.4.3
         with:
