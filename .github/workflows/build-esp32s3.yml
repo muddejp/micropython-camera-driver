@@ -47,58 +47,52 @@ jobs:
           cat $MANAGED_DIR/espressif__esp32-camera/idf_component.yml 2>/dev/null || echo "(not found)"
           rm -f $MANAGED_DIR/espressif__esp32-camera/idf_component.yml
 
-          echo "=== searching Docker image for pre-installed esp-jpeg ==="
-          find /opt/esp -name 'jpeg_decoder.h' 2>/dev/null | head -5 || true
-          find /root -type d -name 'espressif__esp-jpeg' 2>/dev/null | head -5 || true
-
-          echo "=== idf-component-manager registry URL from installed source ==="
-          python3 -c "
-          import idf_component_manager, os
-          pkg = os.path.dirname(idf_component_manager.__file__)
-          print('package:', pkg)
-          for fname in sorted(os.listdir(pkg)):
-              if not fname.endswith('.py'):
-                  continue
-              txt = open(os.path.join(pkg, fname)).read()
-              for line in txt.splitlines():
-                  ls = line.strip()
-                  if ('espressif.com' in ls.lower() or 'COMPONENT_SERVICE' in ls
-                          or 'DEFAULT_SERVICE' in ls or 'service_url' in ls.lower()):
-                      print(fname + ': ' + ls)
-          "
-
-          echo "=== probing registry API (HTTP status shown for each URL) ==="
+          echo "=== fetching esp_jpeg from Espressif component registry ==="
           ESP_JPEG_URL=""
           for API in \
             "https://components.espressif.com/api/components/espressif/esp_jpeg" \
-            "https://components.espressif.com/api/components/espressif/esp_jpeg/versions/" \
-            "https://components.espressif.com/api/components/espressif/esp-jpeg" \
-            "https://components.espressif.com/api/components/espressif__esp_jpeg"; do
-            echo "--- $API ---"
+            "https://components.espressif.com/api/components/espressif/esp-jpeg"; do
             HTTP=$(curl -s --max-time 20 \
               -H "Accept: application/json" \
               -H "User-Agent: idf-component-manager/1.5.0" \
               -o /tmp/resp.json -w "%{http_code}" "$API" 2>/dev/null || echo 000)
-            echo "  HTTP $HTTP  body: $(cat /tmp/resp.json 2>/dev/null | head -c 400)"
             if [ "$HTTP" = "200" ]; then
               URL=$(python3 -c 'import json; d=json.load(open("/tmp/resp.json")); vs=d.get("versions") or d.get("results") or (d if isinstance(d,list) else []); v=vs[0] if vs else {}; print(v.get("url") or v.get("download_url") or v.get("url_to_download") or "")' 2>/dev/null)
-              [ -n "$URL" ] && { ESP_JPEG_URL="$URL"; echo "  DOWNLOAD URL: $URL"; break; }
+              [ -n "$URL" ] && { ESP_JPEG_URL="$URL"; echo "esp_jpeg URL: $URL"; break; }
             fi
           done
 
           if [ -z "$ESP_JPEG_URL" ]; then
-            echo "ERROR: no download URL from registry. See probe output above."
+            echo "ERROR: could not get esp_jpeg download URL"
             exit 1
           fi
 
-          echo "Downloading $ESP_JPEG_URL"
-          mkdir -p $MANAGED_DIR/espressif__esp-jpeg
-          curl -sL --max-time 120 "$ESP_JPEG_URL" \
-            | tar -xzf - --strip-components=1 -C $MANAGED_DIR/espressif__esp-jpeg
-          rm -f $MANAGED_DIR/espressif__esp-jpeg/idf_component.yml
-          echo "esp-jpeg: $(ls $MANAGED_DIR/espressif__esp-jpeg | head -8)"
+          curl -sL --max-time 120 "$ESP_JPEG_URL" -o /tmp/esp_jpeg_dl
+          python3 -c "
+          import zipfile, os
+          src = '/tmp/esp_jpeg_dl'
+          dst = '$MANAGED_DIR/espressif__esp_jpeg'
+          os.makedirs(dst, exist_ok=True)
+          with zipfile.ZipFile(src) as zf:
+              names = zf.namelist()
+              top = names[0].rstrip('/').split('/')[0] if names else ''
+              print('zip top-dir:', top, ' entries:', len(names))
+              for name in names:
+                  rel = name[len(top)+1:] if (top and name.startswith(top+'/')) else name
+                  if not rel:
+                      continue
+                  target = os.path.join(dst, rel)
+                  if name.endswith('/'):
+                      os.makedirs(target, exist_ok=True)
+                  else:
+                      os.makedirs(os.path.dirname(target), exist_ok=True)
+                      with zf.open(name) as s, open(target, 'wb') as d:
+                          d.write(s.read())
+          print('esp_jpeg contents:', os.listdir(dst)[:8])
+          "
+          rm -f $MANAGED_DIR/espressif__esp_jpeg/idf_component.yml
 
-          JPEG_H=$(find $MANAGED_DIR/espressif__esp-jpeg -name 'jpeg_decoder.h' | head -1)
+          JPEG_H=$(find $MANAGED_DIR/espressif__esp_jpeg -name 'jpeg_decoder.h' | head -1)
           echo "jpeg_decoder.h: $JPEG_H"
           if [ -n "$JPEG_H" ]; then
             ln -sf "$JPEG_H" \
@@ -106,7 +100,7 @@ jobs:
             echo "Symlinked OK"
           else
             echo "WARNING: jpeg_decoder.h not found"
-            find $MANAGED_DIR/espressif__esp-jpeg -name '*.h' | head -20
+            find $MANAGED_DIR/espressif__esp_jpeg -name '*.h' | head -20
           fi
 
           echo "=== managed_components ==="
