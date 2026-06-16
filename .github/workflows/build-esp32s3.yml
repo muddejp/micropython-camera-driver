@@ -43,6 +43,8 @@ jobs:
           git clone --depth 1 \
             https://github.com/espressif/esp32-camera.git \
             $MANAGED_DIR/espressif__esp32-camera
+          echo "=== esp32-camera idf_component.yml (shows exact dep name for esp-jpeg) ==="
+          cat $MANAGED_DIR/espressif__esp32-camera/idf_component.yml 2>/dev/null || echo "(not found)"
           rm -f $MANAGED_DIR/espressif__esp32-camera/idf_component.yml
 
           echo "=== searching Docker image for pre-installed esp-jpeg ==="
@@ -60,17 +62,18 @@ jobs:
               txt = open(os.path.join(pkg, fname)).read()
               for line in txt.splitlines():
                   ls = line.strip()
-                  if 'espressif.com' in ls.lower() or 'COMPONENT_SERVICE' in ls:
+                  if ('espressif.com' in ls.lower() or 'COMPONENT_SERVICE' in ls
+                          or 'DEFAULT_SERVICE' in ls or 'service_url' in ls.lower()):
                       print(fname + ': ' + ls)
           "
 
           echo "=== probing registry API (HTTP status shown for each URL) ==="
           ESP_JPEG_URL=""
           for API in \
-            "https://components.espressif.com/api/components/espressif/esp-jpeg/versions/" \
+            "https://components.espressif.com/api/components/espressif/esp_jpeg" \
+            "https://components.espressif.com/api/components/espressif/esp_jpeg/versions/" \
             "https://components.espressif.com/api/components/espressif/esp-jpeg" \
-            "https://components.espressif.com/api/v2/components/espressif/esp-jpeg/versions/" \
-            "https://components.espressif.com/api/v2/components/espressif/esp-jpeg"; do
+            "https://components.espressif.com/api/components/espressif__esp_jpeg"; do
             echo "--- $API ---"
             HTTP=$(curl -s --max-time 20 \
               -H "Accept: application/json" \
