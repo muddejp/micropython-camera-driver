@@ -36,21 +36,12 @@ jobs:
 
       - name: Add esp32-camera to MicroPython component manifest
         run: |
-          # Add esp32-camera as a managed component so the IDF component manager
-          # downloads it (and its esp-jpeg dependency) into managed_components/
-          python3 -c "
-          import yaml, os
-          path = 'micropython/ports/esp32/main/idf_component.yml'
-          data = {}
-          if os.path.exists(path):
-              with open(path) as f:
-                  data = yaml.safe_load(f) or {}
-          data.setdefault('dependencies', {})['espressif/esp32-camera'] = {'version': '>=2.0.0'}
-          with open(path, 'w') as f:
-              yaml.dump(data, f, default_flow_style=False)
-          print('idf_component.yml:')
-          print(open(path).read())
-          "
+          echo "--- before ---"
+          cat micropython/ports/esp32/main/idf_component.yml 2>/dev/null || echo "(file not found)"
+          printf '  espressif/esp32-camera:\n    version: ">=2.0.0"\n' \
+            >> micropython/ports/esp32/main/idf_component.yml
+          echo "--- after ---"
+          cat micropython/ports/esp32/main/idf_component.yml
 
       - name: Patch cmake — use managed_components paths and enable module
         run: |
