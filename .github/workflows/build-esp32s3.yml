@@ -141,6 +141,28 @@ jobs:
 
           # MicroPython v1.20+ removed the STATIC macro (was: #define STATIC static).
           sed -i 's/\bSTATIC\b/static/g' src/modcamera.c
+          python3 -c "
+          with open('src/modcamera.c', 'r') as f:
+              content = f.read()
+          content = content.replace(
+              'static mp_obj_t camera_init(mp_uint_t n_args,',
+              'static mp_obj_t camera_init(size_t n_args,'
+          )
+          force = (
+              '\n/* Force QSTR registration for end-of-table entries */\n'
+              'static const qstr _mp_cam_qstrs_[] __attribute__((used)) = {\n'
+              '    MP_QSTR_EFFECT_GREEN, MP_QSTR_EFFECT_BLUE, MP_QSTR_EFFECT_RETRO,\n'
+              '    MP_QSTR_XCLK_10MHz, MP_QSTR_XCLK_20MHz, MP_QSTR_DRAM, MP_QSTR_PSRAM\n'
+              '};\n'
+          )
+          marker = 'static const mp_rom_map_elem_t camera_module_globals_table'
+          if marker in content and '_mp_cam_qstrs_' not in content:
+              content = content.replace(marker, force + marker, 1)
+              print('inserted QSTR force block')
+          with open('src/modcamera.c', 'w') as f:
+              f.write(content)
+          print('modcamera.c patched')
+          "
           echo "STATIC -> static done"
 
           # Show cmake files IDF will find in EXTRA_COMPONENT_DIRS (= parent of src/).
