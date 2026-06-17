@@ -121,16 +121,19 @@ jobs:
             's|target_compile_definitions(usermod_esp32camera INTERFACE)|target_compile_definitions(usermod_esp32camera INTERFACE MODULE_CAMERA_ENABLED=1)|g' \
             src/micropython.cmake
 
-          # Link idf::esp32-camera so modcamera.c gets esp_camera.h on its include
-          # path and the esp32-camera library is pulled into the final link.
+          # Add esp32-camera include dirs using hardcoded paths.
+          # idf::esp32-camera cmake target doesn't exist yet when micropython.cmake is
+          # include()-d (before project()), so we cannot use target_link_libraries here.
           python3 -c "
           with open('src/micropython.cmake', 'a') as f:
               f.write('''
-          if(ESP_PLATFORM)
-              target_link_libraries(usermod_esp32camera INTERFACE idf::esp32-camera)
-          endif()
+          target_include_directories(usermod_esp32camera INTERFACE
+              /opt/esp/idf/components/esp32-camera/driver/include
+              /opt/esp/idf/components/esp32-camera/conversions/include
+              /opt/esp/idf/components/esp32-camera/sensors/private_include
+          )
           ''')
-          print('appended idf::esp32-camera link to micropython.cmake')
+          print('appended esp32-camera include dirs to micropython.cmake')
           "
 
           echo "=== PATCHED src/micropython.cmake ==="
@@ -138,23 +141,23 @@ jobs:
 
           # MicroPython v1.20+ removed the STATIC macro (was: #define STATIC static).
           sed -i 's/\bSTATIC\b/static/g' src/modcamera.c
-          echo "STATIC → static done"
+          echo "STATIC -> static done"
 
-          # Show all cmake/CMakeLists files in the workspace so we know what IDF
-          # will discover when it scans EXTRA_COMPONENT_DIRS.
+          # Show cmake files IDF will find in EXTRA_COMPONENT_DIRS (= parent of src/).
           echo "=== cmake files in workspace ==="
           find $GITHUB_WORKSPACE -maxdepth 3 \( -name 'CMakeLists.txt' -o -name '*.cmake' \) \
             ! -path '*/.git/*' ! -path '*/micropython/*' | sort
 
-          # MicroPython cmake adds parent(USER_C_MODULES_DIR) to IDF EXTRA_COMPONENT_DIRS,
-          # so any subdirectory of $GITHUB_WORKSPACE with a CMakeLists.txt becomes an IDF
-          # component. main_esp32s3 compiles modcamera.c outside MicroPython's QSTR scan →
-          # MP_QSTR_xxx undeclared. Neutralize it whether or not the directory exists.
-          mkdir -p main_esp32s3
-          printf 'cmake_minimum_required(VERSION 3.16)\nidf_component_register()\n' \
-            > main_esp32s3/CMakeLists.txt
-          echo "=== neutralized main_esp32s3/CMakeLists.txt ==="
-          cat main_esp32s3/CMakeLists.txt
+          # MicroPython's main_esp32s3 IDF component (micropython/ports/esp32/main_esp32s3)
+          # compiles user module sources including modcamera.c. Append a PUBLIC link to
+          # idf::esp32-camera so: (a) esp32-camera headers reach modcamera.c at compile
+          # time, (b) esp32-camera library is in the final link. This runs inside the
+          # component cmake context where ALL idf:: targets already exist.
+          echo "" >> micropython/ports/esp32/main_esp32s3/CMakeLists.txt
+          echo 'target_link_libraries(${COMPONENT_LIB} PUBLIC idf::esp32-camera)' \
+            >> micropython/ports/esp32/main_esp32s3/CMakeLists.txt
+          echo "=== patched main_esp32s3 (tail) ==="
+          tail -4 micropython/ports/esp32/main_esp32s3/CMakeLists.txt
 
       - name: Build camera firmware for ESP32-S3 + Octal PSRAM
         run: |
@@ -167,12 +170,15 @@ jobs:
       - name: Dump build error logs
         if: failure()
         run: |
+          BUILD=micropython/ports/esp32/build-ESP32_GENERIC_S3-SPIRAM_OCT
+          echo "=== CMakeOutput.log (tail) ==="
+          tail -100 $BUILD/CMakeFiles/CMakeOutput.log 2>/dev/null || echo "(not found)"
+          echo "=== CMakeError.log (tail) ==="
+          tail -100 $BUILD/CMakeFiles/CMakeError.log 2>/dev/null || echo "(not found)"
           echo "=== idf_py_stderr_output ==="
-          find micropython/ports/esp32/build-ESP32_GENERIC_S3-SPIRAM_OCT/log \
-            -name 'idf_py_stderr_output_*' -exec cat {} \; 2>/dev/null | tail -300
+          find $BUILD/log -name 'idf_py_stderr_output_*' -exec cat {} \; 2>/dev/null | tail -300
           echo "=== idf_py_stdout_output (tail) ==="
-          find micropython/ports/esp32/build-ESP32_GENERIC_S3-SPIRAM_OCT/log \
-            -name 'idf_py_stdout_output_*' -exec cat {} \; 2>/dev/null | tail -50
+          find $BUILD/log -name 'idf_py_stdout_output_*' -exec cat {} \; 2>/dev/null | tail -50
 
       - name: Upload firmware artifact
         uses: actions/upload-artifact@v4.4.3
