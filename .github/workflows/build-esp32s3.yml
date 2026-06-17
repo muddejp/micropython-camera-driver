@@ -148,16 +148,36 @@ jobs:
           find $GITHUB_WORKSPACE -maxdepth 3 \( -name 'CMakeLists.txt' -o -name '*.cmake' \) \
             ! -path '*/.git/*' ! -path '*/micropython/*' | sort
 
-          # MicroPython's main_esp32s3 IDF component (micropython/ports/esp32/main_esp32s3)
-          # compiles user module sources including modcamera.c. Append a PUBLIC link to
-          # idf::esp32-camera so: (a) esp32-camera headers reach modcamera.c at compile
-          # time, (b) esp32-camera library is in the final link. This runs inside the
-          # component cmake context where ALL idf:: targets already exist.
-          echo "" >> micropython/ports/esp32/main_esp32s3/CMakeLists.txt
-          echo 'target_link_libraries(${COMPONENT_LIB} PUBLIC idf::esp32-camera)' \
-            >> micropython/ports/esp32/main_esp32s3/CMakeLists.txt
-          echo "=== patched main_esp32s3 (tail) ==="
-          tail -4 micropython/ports/esp32/main_esp32s3/CMakeLists.txt
+          # Add esp32-camera to MicroPython's main_esp32s3 component REQUIRES list.
+          # MUST be inside idf_component_register() — target_link_libraries fails here
+          # because idf:: alias targets don't exist during __component_get_requirements
+          # (which runs inside idf_build_process before component cmake is fully set up).
+          echo "=== ORIGINAL main_esp32s3/CMakeLists.txt (tail 20) ==="
+          tail -20 micropython/ports/esp32/main_esp32s3/CMakeLists.txt
+          python3 -c "
+          import re
+          path = 'micropython/ports/esp32/main_esp32s3/CMakeLists.txt'
+          with open(path) as f:
+              content = f.read()
+          if 'esp32-camera' not in content:
+              new = re.sub(r'\bPRIV_REQUIRES\b',
+                           'PRIV_REQUIRES\n        esp32-camera',
+                           content, count=1)
+              if new == content:
+                  new = re.sub(r'\bREQUIRES\b',
+                               'REQUIRES\n        esp32-camera',
+                               content, count=1)
+              if new != content:
+                  with open(path, 'w') as f:
+                      f.write(new)
+                  print('patched: added esp32-camera to idf_component_register REQUIRES')
+              else:
+                  print('ERROR: no REQUIRES/PRIV_REQUIRES found in cmake file')
+          else:
+              print('esp32-camera already present')
+          "
+          echo "=== PATCHED main_esp32s3/CMakeLists.txt (tail 20) ==="
+          tail -20 micropython/ports/esp32/main_esp32s3/CMakeLists.txt
 
       - name: Build camera firmware for ESP32-S3 + Octal PSRAM
         run: |
