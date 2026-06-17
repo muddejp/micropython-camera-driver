@@ -140,11 +140,17 @@ jobs:
           sed -i 's/\bSTATIC\b/static/g' src/modcamera.c
           echo "STATIC → static done"
 
-          # main_esp32s3/CMakeLists.txt registers an IDF component that also compiles
-          # modcamera.c — but outside MicroPython's QSTR pre-scan, so every MP_QSTR_xxx
-          # is undeclared. MicroPython's cmake adds the parent of src/ to IDF's component
-          # search path, which is how IDF finds this directory. Neutralize it so only
-          # the USER_C_MODULES path (which has QSTR support) compiles modcamera.c.
+          # Show all cmake/CMakeLists files in the workspace so we know what IDF
+          # will discover when it scans EXTRA_COMPONENT_DIRS.
+          echo "=== cmake files in workspace ==="
+          find $GITHUB_WORKSPACE -maxdepth 3 \( -name 'CMakeLists.txt' -o -name '*.cmake' \) \
+            ! -path '*/.git/*' ! -path '*/micropython/*' | sort
+
+          # MicroPython cmake adds parent(USER_C_MODULES_DIR) to IDF EXTRA_COMPONENT_DIRS,
+          # so any subdirectory of $GITHUB_WORKSPACE with a CMakeLists.txt becomes an IDF
+          # component. main_esp32s3 compiles modcamera.c outside MicroPython's QSTR scan →
+          # MP_QSTR_xxx undeclared. Neutralize it whether or not the directory exists.
+          mkdir -p main_esp32s3
           printf 'cmake_minimum_required(VERSION 3.16)\nidf_component_register()\n' \
             > main_esp32s3/CMakeLists.txt
           echo "=== neutralized main_esp32s3/CMakeLists.txt ==="
