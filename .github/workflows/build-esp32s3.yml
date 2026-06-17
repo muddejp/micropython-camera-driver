@@ -149,16 +149,15 @@ jobs:
               'static mp_obj_t camera_init(size_t n_args,'
           )
           force = (
-              '\n/* Force QSTR registration for end-of-table entries */\n'
-              'static const qstr _mp_cam_qstrs_[] __attribute__((used)) = {\n'
-              '    MP_QSTR_EFFECT_GREEN, MP_QSTR_EFFECT_BLUE, MP_QSTR_EFFECT_RETRO,\n'
-              '    MP_QSTR_XCLK_10MHz, MP_QSTR_XCLK_20MHz, MP_QSTR_DRAM, MP_QSTR_PSRAM\n'
-              '};\n'
+              '#ifdef NO_QSTR\n'
+              'MP_QSTR_EFFECT_GREEN MP_QSTR_EFFECT_BLUE MP_QSTR_EFFECT_RETRO\n'
+              'MP_QSTR_XCLK_10MHz MP_QSTR_XCLK_20MHz MP_QSTR_DRAM MP_QSTR_PSRAM\n'
+              '#endif\n'
           )
-          marker = 'static const mp_rom_map_elem_t camera_module_globals_table'
-          if marker in content and '_mp_cam_qstrs_' not in content:
-              content = content.replace(marker, force + marker, 1)
-              print('inserted QSTR force block')
+          marker = '#if MODULE_CAMERA_ENABLED\n'
+          if marker in content and 'NO_QSTR' not in content:
+              content = content.replace(marker, marker + force, 1)
+              print('inserted NO_QSTR force block')
           with open('src/modcamera.c', 'w') as f:
               f.write(content)
           print('modcamera.c patched')
