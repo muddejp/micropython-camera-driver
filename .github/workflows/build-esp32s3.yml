@@ -148,16 +148,19 @@ jobs:
               'static mp_obj_t camera_init(mp_uint_t n_args,',
               'static mp_obj_t camera_init(size_t n_args,'
           )
+          content = content.replace(
+              '#if MODULE_CAMERA_ENABLED\n',
+              '#if MODULE_CAMERA_ENABLED || defined(NO_QSTR)\n',
+              1
+          )
           force = (
               '#ifdef NO_QSTR\n'
               'MP_QSTR_EFFECT_GREEN MP_QSTR_EFFECT_BLUE MP_QSTR_EFFECT_RETRO\n'
               'MP_QSTR_XCLK_10MHz MP_QSTR_XCLK_20MHz MP_QSTR_DRAM MP_QSTR_PSRAM\n'
               '#endif\n'
           )
-          marker = '#if MODULE_CAMERA_ENABLED\n'
-          if marker in content and 'NO_QSTR' not in content:
-              content = content.replace(marker, marker + force, 1)
-              print('inserted NO_QSTR force block')
+          marker = '#if MODULE_CAMERA_ENABLED || defined(NO_QSTR)\n'
+          content = content.replace(marker, marker + force, 1)
           with open('src/modcamera.c', 'w') as f:
               f.write(content)
           print('modcamera.c patched')
