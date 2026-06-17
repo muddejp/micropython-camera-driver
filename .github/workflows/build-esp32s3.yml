@@ -124,14 +124,14 @@ jobs:
           # Link idf::esp32-camera so modcamera.c gets esp_camera.h on its include
           # path and the esp32-camera library is pulled into the final link.
           python3 -c "
-with open('src/micropython.cmake', 'a') as f:
-    f.write('''
-if(ESP_PLATFORM)
-    target_link_libraries(usermod_esp32camera INTERFACE idf::esp32-camera)
-endif()
-''')
-print('appended idf::esp32-camera link to micropython.cmake')
-"
+          with open('src/micropython.cmake', 'a') as f:
+              f.write('''
+          if(ESP_PLATFORM)
+              target_link_libraries(usermod_esp32camera INTERFACE idf::esp32-camera)
+          endif()
+          ''')
+          print('appended idf::esp32-camera link to micropython.cmake')
+          "
 
           echo "=== PATCHED src/micropython.cmake ==="
           cat src/micropython.cmake
