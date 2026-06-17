@@ -121,13 +121,34 @@ jobs:
             's|target_compile_definitions(usermod_esp32camera INTERFACE)|target_compile_definitions(usermod_esp32camera INTERFACE MODULE_CAMERA_ENABLED=1)|g' \
             src/micropython.cmake
 
+          # Link idf::esp32-camera so modcamera.c gets esp_camera.h on its include
+          # path and the esp32-camera library is pulled into the final link.
+          python3 -c "
+with open('src/micropython.cmake', 'a') as f:
+    f.write('''
+if(ESP_PLATFORM)
+    target_link_libraries(usermod_esp32camera INTERFACE idf::esp32-camera)
+endif()
+''')
+print('appended idf::esp32-camera link to micropython.cmake')
+"
+
           echo "=== PATCHED src/micropython.cmake ==="
           cat src/micropython.cmake
 
           # MicroPython v1.20+ removed the STATIC macro (was: #define STATIC static).
-          # Replace every use in modcamera.c so it compiles on v1.23.0.
           sed -i 's/\bSTATIC\b/static/g' src/modcamera.c
-          echo "STATIC replacements done: $(grep -c 'static' src/modcamera.c) 'static' occurrences"
+          echo "STATIC → static done"
+
+          # main_esp32s3/CMakeLists.txt registers an IDF component that also compiles
+          # modcamera.c — but outside MicroPython's QSTR pre-scan, so every MP_QSTR_xxx
+          # is undeclared. MicroPython's cmake adds the parent of src/ to IDF's component
+          # search path, which is how IDF finds this directory. Neutralize it so only
+          # the USER_C_MODULES path (which has QSTR support) compiles modcamera.c.
+          printf 'cmake_minimum_required(VERSION 3.16)\nidf_component_register()\n' \
+            > main_esp32s3/CMakeLists.txt
+          echo "=== neutralized main_esp32s3/CMakeLists.txt ==="
+          cat main_esp32s3/CMakeLists.txt
 
       - name: Build camera firmware for ESP32-S3 + Octal PSRAM
         run: |
