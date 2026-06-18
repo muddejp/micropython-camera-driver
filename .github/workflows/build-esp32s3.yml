@@ -62,12 +62,15 @@ jobs:
       - name: Build PYDRONE firmware
         run: |
           . $IDF_PATH/export.sh
-          make -C micropython/ports/esp32 BOARD=PYDRONE
+          make -C micropython/ports/esp32 BOARD=PYDRONE 2>&1 | tee /tmp/pydrone_build.log
+          test ${PIPESTATUS[0]} -eq 0
 
       - name: Dump build error logs
         if: failure()
         run: |
           BUILD=micropython/ports/esp32/build-PYDRONE
+          echo "=== Build output (last 200 lines) ==="
+          tail -200 /tmp/pydrone_build.log 2>/dev/null || echo "(not found)"
           echo "=== CMakeError.log (tail) ==="
           tail -100 $BUILD/CMakeFiles/CMakeError.log 2>/dev/null || echo "(not found)"
           echo "=== idf_py_stderr_output (first 150 lines) ==="
