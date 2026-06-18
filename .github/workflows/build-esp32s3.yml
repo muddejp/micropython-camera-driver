@@ -58,9 +58,23 @@ jobs:
                           with open(path, 'w') as f:
                               f.write(c)
           "
-          # Disable btree: modbtree.c needs berkeley-db headers; drone doesn't use btree
-          printf '\n#undef MICROPY_PY_BTREE\n#define MICROPY_PY_BTREE 0\n' \
-            >> micropython/ports/esp32/boards/PYDRONE/mpconfigboard.h
+          # Disable btree: modbtree.c needs berkeley-db headers; drone doesn't use btree.
+          # mpconfigboard.h is included BEFORE mpconfigport.h sets its defaults, so we
+          # must patch mpconfigport.h directly (board config can't override a plain #define
+          # that appears after it in the include chain).
+          python3 -c "
+          import re
+          path = 'micropython/ports/esp32/mpconfigport.h'
+          with open(path) as f:
+              c = f.read()
+          c2 = re.sub(r'(#define\s+MICROPY_PY_BTREE\s*)\(1\)', r'\1(0)', c)
+          if c2 != c:
+              with open(path, 'w') as f:
+                  f.write(c2)
+              print('Patched mpconfigport.h: MICROPY_PY_BTREE 1->0')
+          else:
+              print('WARNING: MICROPY_PY_BTREE pattern not found in mpconfigport.h')
+          "
 
       - name: Build PYDRONE firmware
         run: |
@@ -72,8 +86,10 @@ jobs:
         if: failure()
         run: |
           BUILD=micropython/ports/esp32/build-PYDRONE
-          echo "=== Build output (last 500 lines) ==="
-          tail -500 /tmp/pydrone_build.log 2>/dev/null || echo "(not found)"
+          echo "=== Build output (first 200 lines — where fatal errors appear) ==="
+          head -200 /tmp/pydrone_build.log 2>/dev/null || echo "(not found)"
+          echo "=== Build output (last 100 lines) ==="
+          tail -100 /tmp/pydrone_build.log 2>/dev/null || echo "(not found)"
           echo "=== CMakeError.log (tail) ==="
           tail -100 $BUILD/CMakeFiles/CMakeError.log 2>/dev/null || echo "(not found)"
           echo "=== idf_py_stderr_output (first 150 lines) ==="
