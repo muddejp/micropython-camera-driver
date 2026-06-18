@@ -93,5 +93,3 @@ jobs:
           name: pydrone-firmware-01studio
           path: micropython/ports/esp32/build-PYDRONE/firmware.bin
           retention-days: 30
-NE/firmware.bin
-          retention-days: 30
