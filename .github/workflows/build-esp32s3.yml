@@ -32,6 +32,26 @@ jobs:
           . $IDF_PATH/export.sh
           make -C micropython/ports/esp32 submodules || echo "Some submodules skipped (btree/berkeley-db not needed for PYDRONE)"
 
+      - name: Disable AI module (requires esp-dl, not needed for drone+camera)
+        run: |
+          rm -rf micropython/ports/esp32/mpy-ai
+          python3 -c "
+          import os, re
+          for root, dirs, files in os.walk('micropython/ports/esp32'):
+              for fname in files:
+                  if fname == 'CMakeLists.txt' or fname.endswith('.cmake'):
+                      path = os.path.join(root, fname)
+                      with open(path) as f:
+                          c = f.read()
+                      orig = c
+                      c = re.sub(r'[ \t]*mpy[-_]ai[^\n]*\n', '', c)
+                      c = re.sub(r'[ \t]*esp[-_]dl[^\n]*\n', '', c)
+                      if c != orig:
+                          print('Patched:', path)
+                          with open(path, 'w') as f:
+                              f.write(c)
+          "
+
       - name: Build PYDRONE firmware
         run: |
           . $IDF_PATH/export.sh
