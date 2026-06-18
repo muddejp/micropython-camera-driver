@@ -30,7 +30,12 @@ jobs:
       - name: Fetch ESP32 port submodules
         run: |
           . $IDF_PATH/export.sh
-          make -C micropython/ports/esp32 submodules || echo "Some submodules skipped (btree/berkeley-db not needed for PYDRONE)"
+          make -C micropython/ports/esp32 submodules || echo "Some submodules skipped"
+          # berkeley-db is needed by modbtree.c; the pinned commit isn't shallow-fetchable so clone HEAD
+          if [ ! -d micropython/lib/berkeley-db-1.xx ]; then
+            git clone --depth 1 https://github.com/pfalcon/berkeley-db-1.xx.git \
+              micropython/lib/berkeley-db-1.xx || echo "WARNING: berkeley-db clone failed"
+          fi
 
       - name: Disable AI module (requires esp-dl, not needed for drone+camera)
         run: |
@@ -63,14 +68,16 @@ jobs:
         if: failure()
         run: |
           BUILD=micropython/ports/esp32/build-PYDRONE
-          echo "=== CMakeOutput.log (tail) ==="
-          tail -100 $BUILD/CMakeFiles/CMakeOutput.log 2>/dev/null || echo "(not found)"
           echo "=== CMakeError.log (tail) ==="
           tail -100 $BUILD/CMakeFiles/CMakeError.log 2>/dev/null || echo "(not found)"
           echo "=== idf_py_stderr_output ==="
           find $BUILD/log -name 'idf_py_stderr_output_*' -exec cat {} \; 2>/dev/null | tail -300
-          echo "=== idf_py_stdout_output (tail) ==="
-          find $BUILD/log -name 'idf_py_stdout_output_*' -exec cat {} \; 2>/dev/null | tail -50
+          echo "=== ninja build log (tail) ==="
+          find $BUILD -name '.ninja_log' -exec tail -20 {} \; 2>/dev/null || echo "(not found)"
+          echo "=== QSTR extraction error (qstr.i.last) ==="
+          cat $BUILD/genhdr/qstr.i.last 2>/dev/null | tail -50 || echo "(not found)"
+          echo "=== last 50 lines of any .o.err files ==="
+          find $BUILD -name '*.o.err' 2>/dev/null | xargs -I{} sh -c 'echo "--- {} ---"; tail -30 {}' 2>/dev/null | head -200 || echo "(no .o.err files)"
 
       - name: Upload firmware artifact
         uses: actions/upload-artifact@v4.4.3
