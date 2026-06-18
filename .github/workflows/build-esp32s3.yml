@@ -36,7 +36,7 @@ jobs:
         run: |
           rm -rf micropython/ports/esp32/mpy-ai
           python3 -c "
-          import os, re
+          import os
           for root, dirs, files in os.walk('micropython/ports/esp32'):
               for fname in files:
                   if fname == 'CMakeLists.txt' or fname.endswith('.cmake'):
@@ -44,8 +44,9 @@ jobs:
                       with open(path) as f:
                           c = f.read()
                       orig = c
-                      c = re.sub(r'[ \t]*mpy[-_]ai[^\n]*\n', '', c)
-                      c = re.sub(r'[ \t]*esp[-_]dl[^\n]*\n', '', c)
+                      # Replace in-place so closing ) on the same line is preserved
+                      c = c.replace('mpy-ai', '').replace('mpy_ai', '')
+                      c = c.replace('esp-dl', '').replace('esp_dl', '')
                       if c != orig:
                           print('Patched:', path)
                           with open(path, 'w') as f:
