@@ -1,4 +1,4 @@
-name: Build pyDrone Camera Firmware (ESP32-S3)
+name: Build pyDrone Camera Firmware (01Studio)
 
 on:
   workflow_dispatch:   # trigger manually from the Actions tab
@@ -10,19 +10,19 @@ jobs:
   build:
     runs-on: ubuntu-latest
     container:
-      image: espressif/idf:v5.2.2
+      image: espressif/idf:v4.4.2
 
     steps:
-      - name: Checkout camera driver
+      - name: Checkout (workflow repo)
         uses: actions/checkout@v4.2.2
 
       - name: Fix git ownership (container uid mismatch)
         run: git config --global --add safe.directory '*'
 
-      - name: Clone MicroPython v1.23.0
+      - name: Clone 01Studio MicroPython fork
         run: |
-          git clone --depth 1 -b v1.23.0 \
-            https://github.com/micropython/micropython.git
+          git clone --depth 1 \
+            https://github.com/01studio-lab/micropython.git
           cd micropython
           git submodule update --init lib/micropython-lib
 
@@ -34,187 +34,15 @@ jobs:
           . $IDF_PATH/export.sh
           make -C micropython/ports/esp32 submodules
 
-      - name: Set up camera managed components
+      - name: Build PYDRONE firmware
         run: |
           . $IDF_PATH/export.sh
-          MANAGED_DIR=$GITHUB_WORKSPACE/micropython/ports/esp32/managed_components
-          mkdir -p $MANAGED_DIR
-
-          git clone --depth 1 \
-            https://github.com/espressif/esp32-camera.git \
-            $MANAGED_DIR/espressif__esp32-camera
-          echo "=== esp32-camera idf_component.yml (shows exact dep name for esp-jpeg) ==="
-          cat $MANAGED_DIR/espressif__esp32-camera/idf_component.yml 2>/dev/null || echo "(not found)"
-          rm -f $MANAGED_DIR/espressif__esp32-camera/idf_component.yml
-
-          echo "=== fetching esp_jpeg from Espressif component registry ==="
-          ESP_JPEG_URL=""
-          for API in \
-            "https://components.espressif.com/api/components/espressif/esp_jpeg" \
-            "https://components.espressif.com/api/components/espressif/esp-jpeg"; do
-            HTTP=$(curl -s --max-time 20 \
-              -H "Accept: application/json" \
-              -H "User-Agent: idf-component-manager/1.5.0" \
-              -o /tmp/resp.json -w "%{http_code}" "$API" 2>/dev/null || echo 000)
-            if [ "$HTTP" = "200" ]; then
-              URL=$(python3 -c 'import json; d=json.load(open("/tmp/resp.json")); vs=d.get("versions") or d.get("results") or (d if isinstance(d,list) else []); v=vs[0] if vs else {}; print(v.get("url") or v.get("download_url") or v.get("url_to_download") or "")' 2>/dev/null)
-              [ -n "$URL" ] && { ESP_JPEG_URL="$URL"; echo "esp_jpeg URL: $URL"; break; }
-            fi
-          done
-
-          if [ -z "$ESP_JPEG_URL" ]; then
-            echo "ERROR: could not get esp_jpeg download URL"
-            exit 1
-          fi
-
-          curl -sL --max-time 120 "$ESP_JPEG_URL" -o /tmp/esp_jpeg_dl
-          python3 -c "
-          import zipfile, os
-          src = '/tmp/esp_jpeg_dl'
-          dst = '$MANAGED_DIR/espressif__esp_jpeg'
-          os.makedirs(dst, exist_ok=True)
-          with zipfile.ZipFile(src) as zf:
-              names = zf.namelist()
-              top = names[0].rstrip('/').split('/')[0] if names else ''
-              print('zip top-dir:', top, ' entries:', len(names))
-              for name in names:
-                  rel = name[len(top)+1:] if (top and name.startswith(top+'/')) else name
-                  if not rel:
-                      continue
-                  target = os.path.join(dst, rel)
-                  if name.endswith('/'):
-                      os.makedirs(target, exist_ok=True)
-                  else:
-                      os.makedirs(os.path.dirname(target), exist_ok=True)
-                      with zf.open(name) as s, open(target, 'wb') as d:
-                          d.write(s.read())
-          print('esp_jpeg contents:', os.listdir(dst)[:8])
-          "
-          rm -f $MANAGED_DIR/espressif__esp_jpeg/idf_component.yml
-
-          JPEG_H=$(find $MANAGED_DIR/espressif__esp_jpeg -name 'jpeg_decoder.h' | head -1)
-          echo "jpeg_decoder.h: $JPEG_H"
-          if [ -n "$JPEG_H" ]; then
-            ln -sf "$JPEG_H" \
-              $MANAGED_DIR/espressif__esp32-camera/conversions/include/jpeg_decoder.h
-            echo "Symlinked OK"
-          else
-            echo "WARNING: jpeg_decoder.h not found"
-            find $MANAGED_DIR/espressif__esp_jpeg -name '*.h' | head -20
-          fi
-
-          echo "=== managed_components ==="
-          ls $MANAGED_DIR/
-
-          # lemariva's esp32_common.cmake hardcodes /opt/esp/idf/components/esp32-camera/
-          # Symlink it to our managed_components clone so cmake finds the headers.
-          ln -sf $MANAGED_DIR/espressif__esp32-camera /opt/esp/idf/components/esp32-camera
-          echo "=== esp32-camera symlink ==="
-          ls -la /opt/esp/idf/components/esp32-camera/driver/include/ | head -5
-
-      - name: Patch cmake — enable camera module
-        run: |
-          echo "=== ORIGINAL src/micropython.cmake ==="
-          cat src/micropython.cmake
-
-          sed -i \
-            's|target_compile_definitions(usermod_esp32camera INTERFACE)|target_compile_definitions(usermod_esp32camera INTERFACE MODULE_CAMERA_ENABLED=1)|g' \
-            src/micropython.cmake
-
-          # Add esp32-camera include dirs using hardcoded paths.
-          # idf::esp32-camera cmake target doesn't exist yet when micropython.cmake is
-          # include()-d (before project()), so we cannot use target_link_libraries here.
-          python3 -c "
-          with open('src/micropython.cmake', 'a') as f:
-              f.write('''
-          target_include_directories(usermod_esp32camera INTERFACE
-              /opt/esp/idf/components/esp32-camera/driver/include
-              /opt/esp/idf/components/esp32-camera/conversions/include
-              /opt/esp/idf/components/esp32-camera/sensors/private_include
-          )
-          ''')
-          print('appended esp32-camera include dirs to micropython.cmake')
-          "
-
-          echo "=== PATCHED src/micropython.cmake ==="
-          cat src/micropython.cmake
-
-          # MicroPython v1.20+ removed the STATIC macro (was: #define STATIC static).
-          sed -i 's/\bSTATIC\b/static/g' src/modcamera.c
-          python3 -c "
-          with open('src/modcamera.c', 'r') as f:
-              content = f.read()
-          content = content.replace(
-              'static mp_obj_t camera_init(mp_uint_t n_args,',
-              'static mp_obj_t camera_init(size_t n_args,'
-          )
-          content = content.replace(
-              '#if MODULE_CAMERA_ENABLED\n',
-              '#if MODULE_CAMERA_ENABLED || defined(NO_QSTR)\n',
-              1
-          )
-          force = (
-              '#ifdef NO_QSTR\n'
-              'MP_QSTR_EFFECT_GREEN MP_QSTR_EFFECT_BLUE MP_QSTR_EFFECT_RETRO\n'
-              'MP_QSTR_XCLK_10MHz MP_QSTR_XCLK_20MHz MP_QSTR_DRAM MP_QSTR_PSRAM\n'
-              '#endif\n'
-          )
-          marker = '#if MODULE_CAMERA_ENABLED || defined(NO_QSTR)\n'
-          content = content.replace(marker, marker + force, 1)
-          with open('src/modcamera.c', 'w') as f:
-              f.write(content)
-          print('modcamera.c patched')
-          "
-          echo "STATIC -> static done"
-
-          # Show cmake files IDF will find in EXTRA_COMPONENT_DIRS (= parent of src/).
-          echo "=== cmake files in workspace ==="
-          find $GITHUB_WORKSPACE -maxdepth 3 \( -name 'CMakeLists.txt' -o -name '*.cmake' \) \
-            ! -path '*/.git/*' ! -path '*/micropython/*' | sort
-
-          # Add esp32-camera to MicroPython's main_esp32s3 component REQUIRES list.
-          # MUST be inside idf_component_register() — target_link_libraries fails here
-          # because idf:: alias targets don't exist during __component_get_requirements
-          # (which runs inside idf_build_process before component cmake is fully set up).
-          echo "=== ORIGINAL main_esp32s3/CMakeLists.txt (tail 20) ==="
-          tail -20 micropython/ports/esp32/main_esp32s3/CMakeLists.txt
-          python3 -c "
-          import re
-          path = 'micropython/ports/esp32/main_esp32s3/CMakeLists.txt'
-          with open(path) as f:
-              content = f.read()
-          if 'esp32-camera' not in content:
-              new = re.sub(r'\bPRIV_REQUIRES\b',
-                           'PRIV_REQUIRES\n        esp32-camera',
-                           content, count=1)
-              if new == content:
-                  new = re.sub(r'\bREQUIRES\b',
-                               'REQUIRES\n        esp32-camera',
-                               content, count=1)
-              if new != content:
-                  with open(path, 'w') as f:
-                      f.write(new)
-                  print('patched: added esp32-camera to idf_component_register REQUIRES')
-              else:
-                  print('ERROR: no REQUIRES/PRIV_REQUIRES found in cmake file')
-          else:
-              print('esp32-camera already present')
-          "
-          echo "=== PATCHED main_esp32s3/CMakeLists.txt (tail 20) ==="
-          tail -20 micropython/ports/esp32/main_esp32s3/CMakeLists.txt
-
-      - name: Build camera firmware for ESP32-S3 + Octal PSRAM
-        run: |
-          . $IDF_PATH/export.sh
-          make -C micropython/ports/esp32 \
-            BOARD=ESP32_GENERIC_S3 \
-            BOARD_VARIANT=SPIRAM_OCT \
-            USER_C_MODULES=$GITHUB_WORKSPACE/src/micropython.cmake
+          make -C micropython/ports/esp32 BOARD=PYDRONE
 
       - name: Dump build error logs
         if: failure()
         run: |
-          BUILD=micropython/ports/esp32/build-ESP32_GENERIC_S3-SPIRAM_OCT
+          BUILD=micropython/ports/esp32/build-PYDRONE
           echo "=== CMakeOutput.log (tail) ==="
           tail -100 $BUILD/CMakeFiles/CMakeOutput.log 2>/dev/null || echo "(not found)"
           echo "=== CMakeError.log (tail) ==="
@@ -227,6 +55,6 @@ jobs:
       - name: Upload firmware artifact
         uses: actions/upload-artifact@v4.4.3
         with:
-          name: pydrone-camera-firmware-esp32s3
-          path: micropython/ports/esp32/build-ESP32_GENERIC_S3-SPIRAM_OCT/firmware.bin
+          name: pydrone-firmware-01studio
+          path: micropython/ports/esp32/build-PYDRONE/firmware.bin
           retention-days: 30
