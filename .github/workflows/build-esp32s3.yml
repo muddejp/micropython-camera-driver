@@ -23,8 +23,6 @@ jobs:
         run: |
           git clone --depth 1 \
             https://github.com/01studio-lab/micropython.git
-          cd micropython
-          git submodule update --init lib/micropython-lib
 
       - name: Build mpy-cross
         run: make -C micropython/mpy-cross
