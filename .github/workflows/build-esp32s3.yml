@@ -70,8 +70,10 @@ jobs:
           BUILD=micropython/ports/esp32/build-PYDRONE
           echo "=== CMakeError.log (tail) ==="
           tail -100 $BUILD/CMakeFiles/CMakeError.log 2>/dev/null || echo "(not found)"
-          echo "=== idf_py_stderr_output ==="
-          find $BUILD/log -name 'idf_py_stderr_output_*' -exec cat {} \; 2>/dev/null | tail -300
+          echo "=== idf_py_stderr_output (first 150 lines) ==="
+          find $BUILD/log -name 'idf_py_stderr_output_*' -exec cat {} \; 2>/dev/null | head -150
+          echo "=== idf_py_stderr_output (last 150 lines) ==="
+          find $BUILD/log -name 'idf_py_stderr_output_*' -exec cat {} \; 2>/dev/null | tail -150
           echo "=== ninja build log (tail) ==="
           find $BUILD -name '.ninja_log' -exec tail -20 {} \; 2>/dev/null || echo "(not found)"
           echo "=== QSTR extraction error (qstr.i.last) ==="
