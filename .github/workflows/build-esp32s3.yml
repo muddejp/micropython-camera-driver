@@ -37,7 +37,7 @@ jobs:
               micropython/lib/berkeley-db-1.xx || echo "WARNING: berkeley-db clone failed"
           fi
 
-      - name: Disable AI module (requires esp-dl, not needed for drone+camera)
+      - name: Disable AI module and btree (optional modules with missing deps)
         run: |
           rm -rf micropython/ports/esp32/mpy-ai
           python3 -c "
@@ -58,6 +58,9 @@ jobs:
                           with open(path, 'w') as f:
                               f.write(c)
           "
+          # Disable btree: modbtree.c needs berkeley-db headers; drone doesn't use btree
+          printf '\n#undef MICROPY_PY_BTREE\n#define MICROPY_PY_BTREE 0\n' \
+            >> micropython/ports/esp32/boards/PYDRONE/mpconfigboard.h
 
       - name: Build PYDRONE firmware
         run: |
@@ -69,8 +72,8 @@ jobs:
         if: failure()
         run: |
           BUILD=micropython/ports/esp32/build-PYDRONE
-          echo "=== Build output (last 200 lines) ==="
-          tail -200 /tmp/pydrone_build.log 2>/dev/null || echo "(not found)"
+          echo "=== Build output (last 500 lines) ==="
+          tail -500 /tmp/pydrone_build.log 2>/dev/null || echo "(not found)"
           echo "=== CMakeError.log (tail) ==="
           tail -100 $BUILD/CMakeFiles/CMakeError.log 2>/dev/null || echo "(not found)"
           echo "=== idf_py_stderr_output (first 150 lines) ==="
@@ -89,4 +92,6 @@ jobs:
         with:
           name: pydrone-firmware-01studio
           path: micropython/ports/esp32/build-PYDRONE/firmware.bin
+          retention-days: 30
+NE/firmware.bin
           retention-days: 30
