@@ -47,6 +47,7 @@ jobs:
                       # Replace in-place so closing ) on the same line is preserved
                       c = c.replace('mpy-ai', '').replace('mpy_ai', '')
                       c = c.replace('esp-dl', '').replace('esp_dl', '')
+                      c = c.replace('esp-code-scanner', '').replace('esp_code_scanner', '')
                       if c != orig:
                           print('Patched:', path)
                           with open(path, 'w') as f:
