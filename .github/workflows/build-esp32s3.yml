@@ -86,10 +86,14 @@ jobs:
         if: failure()
         run: |
           BUILD=micropython/ports/esp32/build-PYDRONE
-          echo "=== Build output (first 200 lines — where fatal errors appear) ==="
-          head -200 /tmp/pydrone_build.log 2>/dev/null || echo "(not found)"
-          echo "=== Build output (last 100 lines) ==="
-          tail -100 /tmp/pydrone_build.log 2>/dev/null || echo "(not found)"
+          echo "=== Linker/compiler errors (grep) ==="
+          grep -E "undefined reference|error:|FAILED:|cannot find -l|multiple definition" \
+            /tmp/pydrone_build.log | grep -v "^--\|cmake\|\[.*\]" | head -80 \
+            2>/dev/null || echo "(not found)"
+          echo "=== Lines after FAILED: micropython.elf ==="
+          grep -A 50 "FAILED: micropython.elf" /tmp/pydrone_build.log 2>/dev/null \
+            | grep -v "^: &&\|esp-idf/\|libbt\|libm\|libphy\|libwifi\|libcoexist\|libnet\|libpp\|libsmartconfig\|libwapi\|libespnow\|libmesh\|libcore" \
+            | head -80 || echo "(not found)"
           echo "=== CMakeError.log (tail) ==="
           tail -100 $BUILD/CMakeFiles/CMakeError.log 2>/dev/null || echo "(not found)"
           echo "=== idf_py_stderr_output (first 150 lines) ==="
