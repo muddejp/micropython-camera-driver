@@ -34,11 +34,18 @@ jobs:
           # berkeley-db: check for the actual source file (not just directory) because
           # 'make submodules' may create an empty placeholder dir for a pinned commit that
           # can't be shallow-fetched, causing a bare directory-check to skip the clone.
+          # Fetch the EXACT berkeley-db commit pinned by the 01Studio micropython fork.
+          # 'make submodules' fails because that commit isn't at a branch tip, so we
+          # use git-init + fetch-by-SHA which always works for reachable objects.
+          BERK_SHA=fe920afb7e901f2a2d512384d5e822aed3717a3f
           if [ ! -f micropython/lib/berkeley-db-1.xx/btree/bt_close.c ]; then
             rm -rf micropython/lib/berkeley-db-1.xx
-            git clone --depth 1 https://github.com/pfalcon/berkeley-db-1.xx.git \
-              micropython/lib/berkeley-db-1.xx
-            echo "berkeley-db cloned: $(ls micropython/lib/berkeley-db-1.xx/btree/ | head -3)"
+            git init micropython/lib/berkeley-db-1.xx
+            git -C micropython/lib/berkeley-db-1.xx remote add origin \
+              https://github.com/pfalcon/berkeley-db-1.xx.git
+            git -C micropython/lib/berkeley-db-1.xx fetch --depth 1 origin $BERK_SHA
+            git -C micropython/lib/berkeley-db-1.xx checkout FETCH_HEAD
+            echo "berkeley-db at $BERK_SHA: $(ls micropython/lib/berkeley-db-1.xx/btree/ | head -3)"
           else
             echo "berkeley-db already present"
           fi
@@ -49,7 +56,7 @@ jobs:
           printf '#include "../queue.h"\n' \
             > micropython/lib/berkeley-db-1.xx/PORT/include/sys/queue.h
 
-      - name: Disable AI module (requires esp-dl, not needed for drone+camera)
+      - name: Patch cmake (remove AI/scanner components that aren't in IDF container)
         run: |
           rm -rf micropython/ports/esp32/mpy-ai
           python3 -c "
@@ -61,7 +68,6 @@ jobs:
                       with open(path) as f:
                           c = f.read()
                       orig = c
-                      # Replace in-place so closing ) on the same line is preserved
                       c = c.replace('mpy-ai', '').replace('mpy_ai', '')
                       c = c.replace('esp-dl', '').replace('esp_dl', '')
                       c = c.replace('esp-code-scanner', '').replace('esp_code_scanner', '')
