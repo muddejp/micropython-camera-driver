@@ -42,6 +42,12 @@ jobs:
           else
             echo "berkeley-db already present"
           fi
+          # mpool.h includes <sys/queue.h> for CIRCLEQ_ENTRY/CIRCLEQ_HEAD, but ESP32
+          # newlib doesn't provide them.  PORT/include/queue.h has them; shadow sys/ so
+          # the -I PORT/include flag intercepts the angle-bracket include.
+          mkdir -p micropython/lib/berkeley-db-1.xx/PORT/include/sys
+          printf '#include "../queue.h"\n' \
+            > micropython/lib/berkeley-db-1.xx/PORT/include/sys/queue.h
 
       - name: Disable AI module (requires esp-dl, not needed for drone+camera)
         run: |
