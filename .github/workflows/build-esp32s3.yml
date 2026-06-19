@@ -35,16 +35,14 @@ jobs:
           # 'make submodules' may create an empty placeholder dir for a pinned commit that
           # can't be shallow-fetched, causing a bare directory-check to skip the clone.
           # Fetch the EXACT berkeley-db commit pinned by the 01Studio micropython fork.
-          # 'make submodules' fails because that commit isn't at a branch tip, so we
-          # use git-init + fetch-by-SHA which always works for reachable objects.
+          # GitHub blocks fetching non-tip SHAs with --depth 1, so we do a full clone
+          # (repo is tiny ~200 KB) and checkout the exact pinned commit.
           BERK_SHA=fe920afb7e901f2a2d512384d5e822aed3717a3f
           if [ ! -f micropython/lib/berkeley-db-1.xx/btree/bt_close.c ]; then
             rm -rf micropython/lib/berkeley-db-1.xx
-            git init micropython/lib/berkeley-db-1.xx
-            git -C micropython/lib/berkeley-db-1.xx remote add origin \
-              https://github.com/pfalcon/berkeley-db-1.xx.git
-            git -C micropython/lib/berkeley-db-1.xx fetch --depth 1 origin $BERK_SHA
-            git -C micropython/lib/berkeley-db-1.xx checkout FETCH_HEAD
+            git clone https://github.com/pfalcon/berkeley-db-1.xx.git \
+              micropython/lib/berkeley-db-1.xx
+            git -C micropython/lib/berkeley-db-1.xx checkout $BERK_SHA
             echo "berkeley-db at $BERK_SHA: $(ls micropython/lib/berkeley-db-1.xx/btree/ | head -3)"
           else
             echo "berkeley-db already present"
