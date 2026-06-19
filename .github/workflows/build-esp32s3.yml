@@ -31,13 +31,19 @@ jobs:
         run: |
           . $IDF_PATH/export.sh
           make -C micropython/ports/esp32 submodules || echo "Some submodules skipped"
-          # berkeley-db is needed by modbtree.c; the pinned commit isn't shallow-fetchable so clone HEAD
-          if [ ! -d micropython/lib/berkeley-db-1.xx ]; then
+          # berkeley-db: check for the actual source file (not just directory) because
+          # 'make submodules' may create an empty placeholder dir for a pinned commit that
+          # can't be shallow-fetched, causing a bare directory-check to skip the clone.
+          if [ ! -f micropython/lib/berkeley-db-1.xx/btree/bt_close.c ]; then
+            rm -rf micropython/lib/berkeley-db-1.xx
             git clone --depth 1 https://github.com/pfalcon/berkeley-db-1.xx.git \
-              micropython/lib/berkeley-db-1.xx || echo "WARNING: berkeley-db clone failed"
+              micropython/lib/berkeley-db-1.xx
+            echo "berkeley-db cloned: $(ls micropython/lib/berkeley-db-1.xx/btree/ | head -3)"
+          else
+            echo "berkeley-db already present"
           fi
 
-      - name: Disable AI module and btree (optional modules with missing deps)
+      - name: Disable AI module (requires esp-dl, not needed for drone+camera)
         run: |
           rm -rf micropython/ports/esp32/mpy-ai
           python3 -c "
@@ -57,23 +63,6 @@ jobs:
                           print('Patched:', path)
                           with open(path, 'w') as f:
                               f.write(c)
-          "
-          # Disable btree: modbtree.c needs berkeley-db headers; drone doesn't use btree.
-          # mpconfigboard.h is included BEFORE mpconfigport.h sets its defaults, so we
-          # must patch mpconfigport.h directly (board config can't override a plain #define
-          # that appears after it in the include chain).
-          python3 -c "
-          import re
-          path = 'micropython/ports/esp32/mpconfigport.h'
-          with open(path) as f:
-              c = f.read()
-          c2 = re.sub(r'(#define\s+MICROPY_PY_BTREE\s*)\(1\)', r'\1(0)', c)
-          if c2 != c:
-              with open(path, 'w') as f:
-                  f.write(c2)
-              print('Patched mpconfigport.h: MICROPY_PY_BTREE 1->0')
-          else:
-              print('WARNING: MICROPY_PY_BTREE pattern not found in mpconfigport.h')
           "
 
       - name: Build PYDRONE firmware
