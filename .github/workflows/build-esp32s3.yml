@@ -30,35 +30,15 @@ jobs:
       - name: Fetch ESP32 port submodules
         run: |
           . $IDF_PATH/export.sh
+          # berkeley-db pinned commit no longer exists in upstream repo; btree is
+          # disabled in the patch step below, so ignore that submodule failure.
           make -C micropython/ports/esp32 submodules || echo "Some submodules skipped"
-          # berkeley-db: check for the actual source file (not just directory) because
-          # 'make submodules' may create an empty placeholder dir for a pinned commit that
-          # can't be shallow-fetched, causing a bare directory-check to skip the clone.
-          # Fetch the EXACT berkeley-db commit pinned by the 01Studio micropython fork.
-          # GitHub blocks fetching non-tip SHAs with --depth 1, so we do a full clone
-          # (repo is tiny ~200 KB) and checkout the exact pinned commit.
-          BERK_SHA=fe920afb7e901f2a2d512384d5e822aed3717a3f
-          if [ ! -f micropython/lib/berkeley-db-1.xx/btree/bt_close.c ]; then
-            rm -rf micropython/lib/berkeley-db-1.xx
-            git clone https://github.com/pfalcon/berkeley-db-1.xx.git \
-              micropython/lib/berkeley-db-1.xx
-            git -C micropython/lib/berkeley-db-1.xx checkout $BERK_SHA
-            echo "berkeley-db at $BERK_SHA: $(ls micropython/lib/berkeley-db-1.xx/btree/ | head -3)"
-          else
-            echo "berkeley-db already present"
-          fi
-          # mpool.h includes <sys/queue.h> for CIRCLEQ_ENTRY/CIRCLEQ_HEAD, but ESP32
-          # newlib doesn't provide them.  PORT/include/queue.h has them; shadow sys/ so
-          # the -I PORT/include flag intercepts the angle-bracket include.
-          mkdir -p micropython/lib/berkeley-db-1.xx/PORT/include/sys
-          printf '#include "../queue.h"\n' \
-            > micropython/lib/berkeley-db-1.xx/PORT/include/sys/queue.h
 
-      - name: Patch cmake (remove AI/scanner components that aren't in IDF container)
+      - name: Patch cmake (remove AI/scanner/btree — deps not available in container)
         run: |
           rm -rf micropython/ports/esp32/mpy-ai
           python3 -c "
-          import os
+          import os, re
           for root, dirs, files in os.walk('micropython/ports/esp32'):
               for fname in files:
                   if fname == 'CMakeLists.txt' or fname.endswith('.cmake'):
@@ -66,13 +46,34 @@ jobs:
                       with open(path) as f:
                           c = f.read()
                       orig = c
+                      # Remove optional components whose deps aren't in the IDF container
                       c = c.replace('mpy-ai', '').replace('mpy_ai', '')
                       c = c.replace('esp-dl', '').replace('esp_dl', '')
                       c = c.replace('esp-code-scanner', '').replace('esp_code_scanner', '')
+                      # Remove unconditional btree link — we disable btree in mpconfigport.h
+                      # (berkeley-db pinned commit no longer exists in upstream repo)
+                      c = re.sub(
+                          r'target_link_libraries\s*\(\s*\$\{MICROPY_TARGET\}\s+micropy_extmod_btree\s*\)',
+                          '', c)
                       if c != orig:
                           print('Patched:', path)
                           with open(path, 'w') as f:
                               f.write(c)
+          "
+          # Disable btree at the C level: mpconfigboard.h is included BEFORE
+          # mpconfigport.h sets defaults, so patch mpconfigport.h directly.
+          python3 -c "
+          import re
+          path = 'micropython/ports/esp32/mpconfigport.h'
+          with open(path) as f:
+              c = f.read()
+          c2 = re.sub(r'(#define\s+MICROPY_PY_BTREE\s*)\(1\)', r'\1(0)', c)
+          if c2 != c:
+              with open(path, 'w') as f:
+                  f.write(c2)
+              print('mpconfigport.h: MICROPY_PY_BTREE set to 0')
+          else:
+              print('WARNING: MICROPY_PY_BTREE pattern not found in mpconfigport.h')
           "
 
       - name: Build PYDRONE firmware
