@@ -37,7 +37,9 @@ jobs:
       - name: Patch cmake (remove AI/scanner/btree — deps not available in container)
         run: |
           rm -rf micropython/ports/esp32/mpy-ai
-          python3 -c "
+          # Single-quoted heredoc: bash does NOT expand $ inside, so Python string
+          # literals with ${MICROPY_TARGET} are passed verbatim.
+          python3 << 'PYEOF'
           import os, re
           for root, dirs, files in os.walk('micropython/ports/esp32'):
               for fname in files:
@@ -46,23 +48,20 @@ jobs:
                       with open(path) as f:
                           c = f.read()
                       orig = c
-                      # Remove optional components whose deps aren't in the IDF container
                       c = c.replace('mpy-ai', '').replace('mpy_ai', '')
                       c = c.replace('esp-dl', '').replace('esp_dl', '')
                       c = c.replace('esp-code-scanner', '').replace('esp_code_scanner', '')
-                      # Remove unconditional btree link — we disable btree in mpconfigport.h
-                      # (berkeley-db pinned commit no longer exists in upstream repo)
-                      c = re.sub(
-                          r'target_link_libraries\s*\(\s*\$\{MICROPY_TARGET\}\s+micropy_extmod_btree\s*\)',
-                          '', c)
+                      # Remove unconditional btree link — berkeley-db pinned commit is gone
+                      c = c.replace(
+                          'target_link_libraries(${MICROPY_TARGET} micropy_extmod_btree)',
+                          '')
                       if c != orig:
                           print('Patched:', path)
                           with open(path, 'w') as f:
                               f.write(c)
-          "
-          # Disable btree at the C level: mpconfigboard.h is included BEFORE
-          # mpconfigport.h sets defaults, so patch mpconfigport.h directly.
-          python3 -c "
+          PYEOF
+          # Disable btree at the C level so modbtree.c never includes db.h
+          python3 << 'PYEOF'
           import re
           path = 'micropython/ports/esp32/mpconfigport.h'
           with open(path) as f:
@@ -74,7 +73,7 @@ jobs:
               print('mpconfigport.h: MICROPY_PY_BTREE set to 0')
           else:
               print('WARNING: MICROPY_PY_BTREE pattern not found in mpconfigport.h')
-          "
+          PYEOF
 
       - name: Build PYDRONE firmware
         run: |
